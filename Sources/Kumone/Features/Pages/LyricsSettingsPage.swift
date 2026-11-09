@@ -107,10 +107,14 @@ struct LyricsSettingsPage: View {
         }
         .formStyle(.grouped)
         .navigationTitle("歌词")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
         .alert("其他不自动翻译的语言", isPresented: $editingExcludedLanguages) {
             TextField("语言代码", text: $excludedLanguagesInput)
+                #if os(iOS)
                 .autocorrectionDisabled()
+                #endif
             Button("保存") {
                 settings.lyricsExcludedLanguages = Self.parseLanguages(excludedLanguagesInput)
             }

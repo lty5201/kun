@@ -348,6 +348,8 @@ struct SettingsView: View {
                     StorageSpaceView {
                         openDestination(.downloaded)
                     }
+                case .lyrics:
+                    LyricsSettingsPage()
                 case .shortcuts:
                     ShortcutSettingsView()
                 }
@@ -358,6 +360,7 @@ struct SettingsView: View {
                 ToolbarItem(placement: .principal) {
                     switch page {
                     case .storage: Text("存储空间").font(.headline)
+                    case .lyrics: Text("歌词").font(.headline)
                     case .shortcuts: Text("快捷键").font(.headline)
                     }
                 }
