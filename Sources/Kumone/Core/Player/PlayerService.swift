@@ -1504,7 +1504,7 @@ final class PlayerService: ObservableObject {
             // AutoMix uses words/analysis to plan future seams. Plain gapless
             // needs only the audio; its displayed lyrics load after adoption.
             async let lyrics: Void = autoMix
-                ? LyricsSidecar.fetchAndWrite(trackID: target.id, for: local) : ()
+                ? LyricsSidecar.fetchAndWrite(track: target, for: local) : ()
             if autoMix { AutoMixDebugModel.shared.setNextStage(.analyzing) }
             let analysis = autoMix ? await self.analysis(for: resolved.key, fileURL: local) : nil
             guard !Task.isCancelled, generation == self.resolveGeneration,
@@ -2709,23 +2709,12 @@ final class PlayerService: ObservableObject {
     }
 
     private func loadLyrics(for track: Track, generation: Int) async {
-        let scope = offlineAccountScope
-        if let scope, let saved = await OfflineMetadataStore.shared.lyrics(trackID: track.id, scope: scope) {
-            guard !Task.isCancelled, generation == resolveGeneration else { return }
-            applyLyrics(saved)
-        }
-        guard !Task.isCancelled, generation == resolveGeneration, !usesOfflineQueue else { return }
-        let response = try? await MusicAPI.lyric(id: track.id)
-        guard !Task.isCancelled, generation == resolveGeneration, let response else { return }
-        applyLyrics(response)
-        // The engine caches every song it streams, so each one may play offline.
-        if let scope { await OfflineMetadataStore.shared.keepPlaybackData(track: track, lyrics: response, scope: scope) }
-    }
-
-    private func applyLyrics(_ response: LyricResponse) {
-        lyrics = LyricsParser.parse(response)
+        guard !Task.isCancelled, generation == resolveGeneration else { return }
+        guard let resolved = await FlutifyLyricsService.shared.resolve(track: track),
+              !Task.isCancelled, generation == resolveGeneration else { return }
+        lyrics = resolved.parsed
         updateLyricsCursor(at: livePlaybackTime)
-        currentLyricLRC = response.lrc?.lyric
+        currentLyricLRC = resolved.rawLRC
         persistCurrentLyricsSidecar()
     }
 

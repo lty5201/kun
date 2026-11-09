@@ -26,15 +26,6 @@ actor OfflineMetadataStore {
         return try? JSONDecoder().decode(Track.self, from: data)
     }
 
-    func save(lyrics: LyricResponse, trackID: Int, scope: String) throws {
-        try write(JSONEncoder().encode(lyrics), to: folder(scope).appendingPathComponent("lyrics-\(trackID).json"))
-    }
-
-    func lyrics(trackID: Int, scope: String) -> LyricResponse? {
-        guard let data = try? Data(contentsOf: folder(scope).appendingPathComponent("lyrics-\(trackID).json")) else { return nil }
-        return try? JSONDecoder().decode(LyricResponse.self, from: data)
-    }
-
     func saveArtwork(_ data: Data, url: URL, scope: String) throws {
         guard data.count <= 12 * 1024 * 1024,
               let image = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceCreateImageAtIndex(image, 0, nil) != nil else {
@@ -46,25 +37,21 @@ actor OfflineMetadataStore {
     func artwork(url: URL, scope: String) -> Data? { try? Data(contentsOf: artworkURL(url, scope: scope)) }
 
     func hasDisplayData(track: Track, scope: String) -> Bool {
-        let hasLyrics = lyrics(trackID: track.id, scope: scope) != nil
         let hasArtwork = track.album.picUrl.flatMap(URL.init(string:)).map { artwork(url: $0, scope: scope) != nil } ?? true
-        return hasLyrics && hasArtwork
+        return hasArtwork
     }
 
     func fetchDisplayData(track: Track, scope: String) async {
         guard !Task.isCancelled else { return }
         do { try save(track: track, scope: scope) } catch { return }
-        async let response = try? MusicAPI.lyric(id: track.id)
         async let cover = fetchArtwork(track: track)
-        if let response = await response { try? save(lyrics: response, trackID: track.id, scope: scope) }
         if let (url, data) = await cover { try? saveArtwork(data, url: url, scope: scope) }
     }
 
     /// What a song the cache holds needs to show offline like a download: its
-    /// record, its lyrics and its artwork. Artwork is fetched once.
-    func keepPlaybackData(track: Track, lyrics: LyricResponse?, scope: String) async {
+    /// record and its artwork. Artwork is fetched once.
+    func keepPlaybackData(track: Track, scope: String) async {
         try? save(track: track, scope: scope)
-        if let lyrics { try? save(lyrics: lyrics, trackID: track.id, scope: scope) }
         guard let url = track.album.picUrl.flatMap(URL.init(string:)), artwork(url: url, scope: scope) == nil else { return }
         if let (url, data) = await fetchArtwork(track: track), !Task.isCancelled {
             try? saveArtwork(data, url: url, scope: scope)
@@ -85,7 +72,7 @@ actor OfflineMetadataStore {
             for (scope, ids) in kept {
                 let key = Self.key(scope)
                 for id in ids {
-                    filesToKeep[key, default: []].formUnion(["track-\(id).json", "lyrics-\(id).json"])
+                    filesToKeep[key, default: []].formUnion(["track-\(id).json"])
                     if let cover = track(id: id, scope: scope)?.album.picUrl.flatMap(URL.init(string:)) {
                         filesToKeep[key, default: []].insert(artworkURL(cover, scope: scope).lastPathComponent)
                     }
@@ -97,7 +84,7 @@ actor OfflineMetadataStore {
                 let protected = filesToKeep[folder.lastPathComponent] ?? []
                 for file in try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey]) {
                     let name = file.lastPathComponent
-                    guard !protected.contains(name), ["track-", "lyrics-", "art-"].contains(where: name.hasPrefix),
+                    guard !protected.contains(name), ["track-", "art-"].contains(where: name.hasPrefix),
                           let modified = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
                           modified < now.addingTimeInterval(-60) else { continue }
                     try FileManager.default.removeItem(at: file)

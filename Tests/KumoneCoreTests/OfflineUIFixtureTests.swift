@@ -43,8 +43,6 @@ struct OfflineUIFixtureTests {
                 job.receivedBytes = descriptor.byteCount
                 job.expectedBytes = descriptor.byteCount
                 job.metadataPending = false
-                let lyrics = try JSONDecoder().decode(LyricResponse.self, from: Data("{\"lrc\":{\"lyric\":\"[00:00.00]离线也能听见音乐\\n[00:01.00]第二行歌词\"}}".utf8))
-                try await metadata.save(lyrics: lyrics, trackID: track.id, scope: scope)
                 if let coverPath = ProcessInfo.processInfo.environment["KUMONE_UI_FIXTURE_COVER"] {
                     try await metadata.saveArtwork(Data(contentsOf: URL(fileURLWithPath: coverPath)), url: URL(string: "https://example.test/cover.png")!, scope: scope)
                 }

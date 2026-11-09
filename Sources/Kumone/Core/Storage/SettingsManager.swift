@@ -125,7 +125,6 @@ final class SettingsManager: ObservableObject {
         static let showTranslation = "settings.showLyricsTranslation"
         static let showRomaji = "settings.showLyricsRomaji"  // migrated to `annotation`
         static let annotation = "settings.lyricsAnnotation"
-        static let verbatimLyrics = "settings.verbatimLyrics"
         static let volume = "settings.volume"
         static let fmMode = "settings.fmMode"
         static let unblock = "settings.enableUnblock"
@@ -237,12 +236,6 @@ final class SettingsManager: ObservableObject {
     }
 
     /// Karaoke-style word-by-word highlighting: the service's own timing when the
-    /// song has verbatim (yrc) lyrics, else the line's time spread across its
-    /// characters.
-    @Published var verbatimLyrics: Bool {
-        didSet { UserDefaults.standard.set(verbatimLyrics, forKey: Keys.verbatimLyrics) }
-    }
-
     /// Resolve gray tracks from the Luoxue (LX Music) custom source script.
     @Published var enableUnblock: Bool {
         didSet { UserDefaults.standard.set(enableUnblock, forKey: Keys.unblock) }
@@ -449,7 +442,6 @@ final class SettingsManager: ObservableObject {
         // Carry over the old on/off romaji toggle for anyone who had it on.
         lyricsAnnotation = defaults.string(forKey: Keys.annotation).flatMap(LyricsAnnotation.init)
             ?? (defaults.bool(forKey: Keys.showRomaji) ? .romaji : .off)
-        verbatimLyrics = defaults.object(forKey: Keys.verbatimLyrics) as? Bool ?? true
         enableUnblock = defaults.object(forKey: Keys.unblock) as? Bool ?? true
         luoxueScriptPath = defaults.string(forKey: Keys.luoxueScriptPath)
         autoCheckUpdates = defaults.object(forKey: Keys.autoCheckUpdates) as? Bool ?? true

@@ -1337,7 +1337,7 @@ struct NowPlayingView: View {
                 LyricMainText(
                     line: line, isActive: isActive,
                     size: isActive ? 26 : 20, weight: isActive ? .bold : .semibold,
-                    verbatim: settings.verbatimLyrics
+                    verbatim: true
                 )
                 if settings.showLyricsTranslation, let translation = line.translation {
                     Text(translation)
@@ -1373,7 +1373,7 @@ struct NowPlayingView: View {
                     line: line, isActive: isActive,
                     size: isActive ? 32 : 21,
                     weight: isActive ? .bold : .medium,
-                    verbatim: settings.verbatimLyrics,
+                    verbatim: true,
                     alignment: .center
                 )
                 if settings.showLyricsTranslation, let translation = line.translation {
@@ -1598,7 +1598,7 @@ private struct IOSImmersiveLyricsColumn: View {
                     isActive: isActive,
                     size: isActive ? 26 : 21,
                     weight: isActive ? .bold : .semibold,
-                    verbatim: settings.verbatimLyrics
+                    verbatim: true
                 )
 
                 if settings.showLyricsTranslation, let translation = line.translation {
@@ -2410,7 +2410,7 @@ private struct IOSMinimalLyricsColumn: View {
                 LyricMainText(
                     line: line, isActive: isActive,
                     size: 17, weight: .bold,
-                    verbatim: settings.verbatimLyrics
+                    verbatim: true
                 )
                     .fixedSize(horizontal: false, vertical: true)
                     .scaleEffect(isActive ? 1.02 : 16.0 / 17.0, anchor: .leading)

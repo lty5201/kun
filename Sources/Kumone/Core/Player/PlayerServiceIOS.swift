@@ -1250,20 +1250,11 @@ final class PlayerService: ObservableObject {
     }
 
     private func loadLyrics(for track: Track, generation: Int) async {
-        let scope = offlineAccountScope
-        if let scope, let saved = await OfflineMetadataStore.shared.lyrics(trackID: track.id, scope: scope) {
-            guard generation == resolveGeneration else { return }
-            lyrics = LyricsParser.parse(saved)
-            updateLyricsCursor(at: progress)
-        }
-        guard !usesOfflineQueue else { return }
-        let response = try? await MusicAPI.lyric(id: track.id)
-        guard generation == resolveGeneration, let response else { return }
-        lyrics = LyricsParser.parse(response)
+        guard generation == resolveGeneration else { return }
+        guard let resolved = await FlutifyLyricsService.shared.resolve(track: track),
+              generation == resolveGeneration else { return }
+        lyrics = resolved.parsed
         updateLyricsCursor(at: progress)
-        if let scope, SettingsManager.shared.enableAudioCache || DownloadManager.shared.isDownloaded(trackID: track.id) {
-            await OfflineMetadataStore.shared.keepPlaybackData(track: track, lyrics: response, scope: scope)
-        }
     }
 
     // MARK: - Offline playback
