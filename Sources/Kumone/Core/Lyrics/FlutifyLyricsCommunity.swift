@@ -183,13 +183,18 @@ actor NeteaseClient {
         cooldownUntil.map { $0 > Date() } ?? false
     }
 
-    private func retry<T>(_ request: @escaping () async -> NeteaseResponse<T>) async -> NeteaseResponse<T> {
+    private func retry<T>(_ request: @escaping () async throws -> NeteaseResponse<T>) async -> NeteaseResponse<T> {
         var attempt = 0
         while true {
             // No requests during cooldown (including the case where another
             // request got rate-controlled while waiting for a retry).
             if coolingDown { return NeteaseResponse(value: nil, networkError: true) }
-            let result = await request()
+            let result: NeteaseResponse<T>
+            do {
+                result = try await request()
+            } catch {
+                result = NeteaseResponse(value: nil, networkError: true)
+            }
             // Freshly rate-controlled (cooldown already entered): no retry.
             if !result.networkError || attempt >= 2 || coolingDown { return result }
             attempt += 1
@@ -409,7 +414,7 @@ enum NeteaseTranslationSource {
             .filter { !$0.words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         // Non-empty original lines and their indexes into `originals`.
         let originalIdx = originals.indices.filter {
-            !$0.words.fRemovingNonLetters().isEmpty
+            !originals[$0].words.fRemovingNonLetters().isEmpty
         }
         let originalLines = originalIdx.map { originals[$0] }
         if transLines.isEmpty || originalLines.isEmpty { return nil }
@@ -1002,8 +1007,8 @@ enum CommunityLyrics {
         var translated: [FLyricLine]?
         if !tlyric.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && lang != .zh {
             translated = NeteaseTranslationSource.align(lrc, tlyric, lines)
-            if let translated,
-               !FLyricsLanguage.of("und", translated.map(\.words).joined(separator: "\n")).hasPrefix("zh") {
+            if let joined = translated,
+               !FLyricsLanguage.of("und", joined.map(\.words).joined(separator: "\n")).hasPrefix("zh") {
                 translated = nil
             }
         }

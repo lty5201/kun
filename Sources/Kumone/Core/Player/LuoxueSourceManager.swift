@@ -44,6 +44,7 @@ final class LuoxueSourceManager: ObservableObject {
 
     /// Whether Settings should offer a reload button (a script is installed
     /// and either loaded or failed).
+    @MainActor
     var needsReload: Bool {
         switch state {
         case .ready, .failed:
@@ -69,7 +70,9 @@ final class LuoxueSourceManager: ObservableObject {
             return isReady
         }
         autoLoadAttempted = true
-        guard let path = SettingsManager.shared.luoxueScriptPath else {
+        // Nonisolated context: read the persisted key directly (UserDefaults
+        // is thread-safe) instead of the MainActor-isolated SettingsManager.
+        guard let path = UserDefaults.standard.string(forKey: SettingsManager.Keys.luoxueScriptPath) else {
             lock.unlock()
             return false
         }
@@ -164,7 +167,7 @@ final class LuoxueSourceManager: ObservableObject {
     func resolve(track: Track) async throws -> ResolvedAudioSource? {
         guard isReady else { throw LuoxueScriptError.notLoaded }
         let quality = Self.lxQuality(
-            for: SettingsManager.shared.audioQuality,
+            for: await MainActor.run { SettingsManager.shared.audioQuality },
             supported: lock.withLock { currentCapabilities["wy"]?.qualitys }
         )
         let url = try await runtime.resolveMusicURL(source: "wy", songID: track.id, quality: quality)

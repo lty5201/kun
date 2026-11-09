@@ -90,8 +90,8 @@ final class LuoxueNativeBridge: NSObject, LuoxueBridgeExports {
                 switch result {
                 case .success(let response):
                     self?.invokeCallback(callbackBox, response: response)
-                case .failure(let message):
-                    self?.invokeCallback(callbackBox, error: message)
+                case .failure(let failure):
+                    self?.invokeCallback(callbackBox, error: failure.message)
                 }
             }
         }
@@ -128,8 +128,8 @@ final class LuoxueNativeBridge: NSObject, LuoxueBridgeExports {
         guard let runtime = runtime, let context = runtime.contextOnQueue else {
             return JSValue(undefinedIn: JSContext())
         }
-        let string = text.isString ? text.toString() : ""
-        let typeString = type.isString ? type.toString() : "utf8"
+        let string = text.isString ? (text.toString() ?? "") : ""
+        let typeString = type.isString ? (type.toString() ?? "utf8") : "utf8"
         let bytes = LuoxueCrypto.bytes(fromString: string, encoding: typeString)
         return JSValue(object: bytes, in: context) ?? JSValue(nullIn: context)
     }
@@ -139,7 +139,7 @@ final class LuoxueNativeBridge: NSObject, LuoxueBridgeExports {
             return JSValue(undefinedIn: JSContext())
         }
         let bytes = runtime.bytes(from: buffer)
-        let typeString = type.isString ? type.toString() : "utf8"
+        let typeString = type.isString ? (type.toString() ?? "utf8") : "utf8"
         let string = LuoxueCrypto.string(fromBytes: bytes, encoding: typeString)
         return JSValue(object: string, in: context) ?? JSValue(nullIn: context)
     }
@@ -150,7 +150,7 @@ final class LuoxueNativeBridge: NSObject, LuoxueBridgeExports {
         guard let runtime = runtime, let context = runtime.contextOnQueue else {
             return JSValue(undefinedIn: JSContext())
         }
-        let digest = LuoxueCrypto.md5Hex(text.isString ? text.toString() : "")
+        let digest = LuoxueCrypto.md5Hex(text.isString ? (text.toString() ?? "") : "")
         return JSValue(object: digest, in: context) ?? JSValue(nullIn: context)
     }
 
@@ -166,7 +166,7 @@ final class LuoxueNativeBridge: NSObject, LuoxueBridgeExports {
         guard let runtime = runtime, let context = runtime.contextOnQueue else {
             return JSValue(undefinedIn: JSContext())
         }
-        let modeString = mode.isString ? mode.toString() : ""
+        let modeString = mode.isString ? (mode.toString() ?? "") : ""
         let output = LuoxueCrypto.aesCrypt(
             operation: CCOperation(kCCEncrypt),
             data: runtime.bytes(from: data),
@@ -181,7 +181,7 @@ final class LuoxueNativeBridge: NSObject, LuoxueBridgeExports {
         guard let runtime = runtime, let context = runtime.contextOnQueue else {
             return JSValue(undefinedIn: JSContext())
         }
-        let modeString = mode.isString ? mode.toString() : ""
+        let modeString = mode.isString ? (mode.toString() ?? "") : ""
         let output = LuoxueCrypto.aesCrypt(
             operation: CCOperation(kCCDecrypt),
             data: runtime.bytes(from: data),
@@ -196,7 +196,7 @@ final class LuoxueNativeBridge: NSObject, LuoxueBridgeExports {
         guard let runtime = runtime, let context = runtime.contextOnQueue else {
             return JSValue(undefinedIn: JSContext())
         }
-        let pem = key.isString ? key.toString() : ""
+        let pem = key.isString ? (key.toString() ?? "") : ""
         let output = LuoxueCrypto.rsaCrypt(
             operation: CCOperation(kCCEncrypt),
             data: runtime.bytes(from: data),
@@ -209,7 +209,7 @@ final class LuoxueNativeBridge: NSObject, LuoxueBridgeExports {
         guard let runtime = runtime, let context = runtime.contextOnQueue else {
             return JSValue(undefinedIn: JSContext())
         }
-        let pem = key.isString ? key.toString() : ""
+        let pem = key.isString ? (key.toString() ?? "") : ""
         let output = LuoxueCrypto.rsaCrypt(
             operation: CCOperation(kCCDecrypt),
             data: runtime.bytes(from: data),
@@ -437,13 +437,13 @@ final class LuoxueScriptRuntime {
             return array.compactMap { ($0 as? NSNumber)?.uint8Value }
         }
         if value.isString {
-            return Array(value.toString().utf8)
+            return Array((value.toString() ?? "").utf8)
         }
         return []
     }
 
     func makeRequest(urlValue: JSValue, optionsValue: JSValue) -> URLRequest? {
-        guard let urlString = urlValue.isString ? urlValue.toString() : nil,
+        guard let urlString = urlValue.isString ? (urlValue.toString() ?? nil) : nil,
               let url = URL(string: urlString) else { return nil }
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
@@ -474,14 +474,19 @@ final class LuoxueScriptRuntime {
         return request
     }
 
-    func performRequest(_ request: URLRequest, completion: @escaping (Result<[String: Any], String>) -> Void) {
+    /// Failure payload for `performRequest` (plain `String` is not an `Error`).
+    struct LuoxueHTTPError: Error {
+        let message: String
+    }
+
+    func performRequest(_ request: URLRequest, completion: @escaping (Result<[String: Any], LuoxueHTTPError>) -> Void) {
         let task = session.dataTask(with: request) { data, response, error in
             if let error {
-                completion(.failure(error.localizedDescription))
+                completion(.failure(LuoxueHTTPError(message: error.localizedDescription)))
                 return
             }
             guard let httpResponse = response as? HTTPURLResponse else {
-                completion(.failure("non-http response"))
+                completion(.failure(LuoxueHTTPError(message: "non-http response")))
                 return
             }
             var headers: [String: String] = [:]
@@ -621,7 +626,7 @@ final class LuoxueSettlementBox: @unchecked Sendable {
            url.scheme == "http" || url.scheme == "https" {
             finish?(.success(url))
         } else {
-            let raw = value.isString ? value.toString() : "non-string result"
+            let raw = value.isString ? (value.toString() ?? "") : "non-string result"
             finish?(.failure(LuoxueScriptError.invalidURL(raw)))
         }
     }
@@ -634,21 +639,21 @@ final class LuoxueSettlementBox: @unchecked Sendable {
 
     private static func urlString(from value: JSValue) -> String? {
         if value.isString {
-            let string = value.toString().trimmingCharacters(in: .whitespacesAndNewlines)
+            let string = (value.toString() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return string.isEmpty ? nil : string
         }
         if value.isObject, let url = value.objectForKeyedSubscript("url"), url.isString {
-            return url.toString()
+            return url.toString() ?? nil
         }
         return nil
     }
 
     static func errorMessage(from value: JSValue) -> String {
-        if value.isString { return value.toString() }
+        if value.isString { return value.toString() ?? "" }
         if let message = value.objectForKeyedSubscript("message"), message.isString {
-            return message.toString()
+            return message.toString() ?? ""
         }
-        return value.toString()
+        return value.toString() ?? ""
     }
 }
 
@@ -667,7 +672,8 @@ enum LuoxueCrypto {
     static func bytes(fromString string: String, encoding: String) -> [UInt8] {
         switch encoding.lowercased() {
         case "base64":
-            return Data(base64Encoded: string)?.bytes ?? []
+            guard let data = Data(base64Encoded: string) else { return [] }
+            return [UInt8](data)
         case "hex":
             return hexToBytes(string)
         default:
