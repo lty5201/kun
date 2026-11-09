@@ -129,7 +129,7 @@ final class SettingsManager: ObservableObject {
         static let volume = "settings.volume"
         static let fmMode = "settings.fmMode"
         static let unblock = "settings.enableUnblock"
-        static let unblockSources = "settings.enabledUnblockSources"
+        static let luoxueScriptPath = "settings.luoxueScriptPath"
         static let autoCheckUpdates = "settings.autoCheckUpdates"
         static let desktopLyrics = "settings.showDesktopLyrics"
         #if os(macOS)
@@ -243,23 +243,26 @@ final class SettingsManager: ObservableObject {
         didSet { UserDefaults.standard.set(verbatimLyrics, forKey: Keys.verbatimLyrics) }
     }
 
-    /// Resolve gray tracks from third-party sources (unblock-style).
+    /// Resolve gray tracks from the Luoxue (LX Music) custom source script.
     @Published var enableUnblock: Bool {
         didSet { UserDefaults.standard.set(enableUnblock, forKey: Keys.unblock) }
     }
 
-    /// Built-in third-party sources eligible for gray-track resolution.
-    @Published var enabledAudioSourceIDs: Set<AudioSourceID> {
+    /// Path of the installed Luoxue custom source script.
+    @Published var luoxueScriptPath: String? {
         didSet {
-            UserDefaults.standard.set(
-                enabledAudioSourceIDs.map(\.rawValue).sorted(),
-                forKey: Keys.unblockSources
-            )
+            guard luoxueScriptPath != oldValue else { return }
+            if let luoxueScriptPath {
+                UserDefaults.standard.set(luoxueScriptPath, forKey: Keys.luoxueScriptPath)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Keys.luoxueScriptPath)
+            }
         }
     }
 
     var canResolveUnblockedTracks: Bool {
-        enableUnblock && !enabledAudioSourceIDs.isEmpty
+        LuoxueSourceManager.shared.ensureLoadedFromSettings()
+        return enableUnblock && LuoxueSourceManager.shared.isReady
     }
 
     /// Floating desktop lyrics window (LyricsX-style).
@@ -448,11 +451,7 @@ final class SettingsManager: ObservableObject {
             ?? (defaults.bool(forKey: Keys.showRomaji) ? .romaji : .off)
         verbatimLyrics = defaults.object(forKey: Keys.verbatimLyrics) as? Bool ?? true
         enableUnblock = defaults.object(forKey: Keys.unblock) as? Bool ?? true
-        if let rawSourceIDs = defaults.stringArray(forKey: Keys.unblockSources) {
-            enabledAudioSourceIDs = Set(rawSourceIDs.compactMap(AudioSourceID.init))
-        } else {
-            enabledAudioSourceIDs = Set(AudioSourceID.allCases)
-        }
+        luoxueScriptPath = defaults.string(forKey: Keys.luoxueScriptPath)
         autoCheckUpdates = defaults.object(forKey: Keys.autoCheckUpdates) as? Bool ?? true
         showDesktopLyrics = defaults.object(forKey: Keys.desktopLyrics) as? Bool ?? false
         #if os(macOS)

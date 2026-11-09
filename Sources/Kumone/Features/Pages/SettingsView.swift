@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 #if os(macOS)
 import Combine
 #endif
@@ -47,11 +48,26 @@ struct SettingsSheet: View {
 struct SettingsView: View {
     @EnvironmentObject private var settings: SettingsManager
     @EnvironmentObject private var account: AccountStore
+    @ObservedObject private var luoxue = LuoxueSourceManager.shared
+    @State private var showingLuoxueImporter = false
     @Environment(\.openDestination) private var openDestination
     #if os(macOS)
     @AppStorage(SettingsManager.Keys.menuBarPlayer) private var showMenuBarPlayer = false
     @State private var navigationPath: [SettingsPage] = []
     #endif
+
+    private var luoxueStatusText: String {
+        switch luoxue.state {
+        case .idle:
+            return String(localized: "未选择脚本")
+        case .loading:
+            return String(localized: "载入中…")
+        case .ready(let sources):
+            return String(localized: "已载入（\(sources.joined(separator: "、"))）")
+        case .failed(let message):
+            return String(localized: "载入失败：\(message)")
+        }
+    }
 
     fileprivate enum SettingsPage: Hashable {
         case storage
@@ -111,7 +127,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settingsSoundEffectsButton")
                 #endif
                 Toggle("灰色歌曲解锁", isOn: $settings.enableUnblock)
-                Text("无版权或下架歌曲将从已启用音源中匹配播放")
+                Text("无版权或下架歌曲将通过落雪自定义源匹配播放")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -122,20 +138,45 @@ struct SettingsView: View {
 
             if settings.enableUnblock {
                 Section {
-                    ForEach(AudioSourceID.allCases, id: \.self) { source in
-                        Toggle(source.displayName, isOn: Binding(
-                            get: { settings.enabledAudioSourceIDs.contains(source) },
-                            set: { isEnabled in
-                                if isEnabled {
-                                    settings.enabledAudioSourceIDs.insert(source)
-                                } else {
-                                    settings.enabledAudioSourceIDs.remove(source)
-                                }
-                            }
-                        ))
+                    Button {
+                        showingLuoxueImporter = true
+                    } label: {
+                        HStack {
+                            Text("落雪自定义源")
+                            Spacer()
+                            Text(luoxueStatusText)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
                     }
+                    .accessibilityIdentifier("settingsLuoxueScriptButton")
+                    if luoxue.needsReload {
+                        Button("重新载入脚本") {
+                            Task { await luoxue.reload() }
+                        }
+                    }
+                    Text("选择落雪音乐（LX Music）自定义源脚本（.js 文件）。脚本仅在本机运行，用于解析无版权或试听歌曲的播放地址。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 } header: {
-                    Text("音源")
+                    Text("自定义源")
+                }
+                .fileImporter(
+                    isPresented: $showingLuoxueImporter,
+                    allowedContentTypes: [.item],
+                    allowsMultipleSelection: false
+                ) { result in
+                    switch result {
+                    case .success(let urls):
+                        guard let url = urls.first else { return }
+                        Task { await luoxue.install(scriptAt: url) }
+                    case .failure:
+                        break
+                    }
+                }
+                .onAppear {
+                    _ = LuoxueSourceManager.shared.ensureLoadedFromSettings()
                 }
             }
 

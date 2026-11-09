@@ -210,7 +210,7 @@ struct PlayerBar: View {
                 QualityTag(text: quality.badge)
                     .padding(.trailing, 2)
             } else if !compact, player.unblockSource != nil {
-                QualityTag(text: String(localized: "音源"))
+                QualityTag(text: String(localized: "自定义源"))
                     .padding(.trailing, 2)
                     .help("来自 \(player.unblockSource ?? "")")
             }

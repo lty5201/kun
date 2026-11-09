@@ -1072,15 +1072,10 @@ final class PlayerService: ObservableObject {
         if let urlString = data?.url {
             url = URL(string: urlString.replacingOccurrences(of: "http://", with: "https://"))
         }
-        // The service refused — try third-party sources (unblock-style).
-        // #104 made the source list configurable; resolve through the enabled
-        // sources (single-shot here, so nothing is excluded).
+        // The service refused — resolve through the Luoxue custom source
+        // (single-shot here, so nothing is excluded).
         if url == nil || data?.freeTrialInfo != nil, SettingsManager.shared.enableUnblock {
-            let resolution = await UnblockService.resolve(
-                track,
-                enabledSources: SettingsManager.shared.enabledAudioSourceIDs,
-                excluding: []
-            )
+            let resolution = await UnblockService.resolve(track, excluding: [])
             if let unblocked = resolution.source {
                 url = unblocked.url
                 unblock = unblocked.displayName
@@ -1152,7 +1147,7 @@ final class PlayerService: ObservableObject {
         scheduleAudioUnitReadback()
         unblockSource = resolved.unblockSource
         if let source = resolved.unblockSource {
-            ToastCenter.shared.show(String(localized: "已使用第三方音源：\(source)"))
+            ToastCenter.shared.show(String(localized: "已使用自定义源：\(source)"))
         }
         if resolved.isTrial {
             isTrial = true

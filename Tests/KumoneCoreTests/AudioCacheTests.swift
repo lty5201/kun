@@ -52,7 +52,7 @@ struct AudioCacheTests {
             trackID: 2,
             requestedQuality: "exhigh",
             servedQuality: nil,
-            source: .unblock("Kuwo"),
+            source: .unblock("Luoxue"),
             into: cache
         )
 
@@ -68,7 +68,7 @@ struct AudioCacheTests {
         )
 
         #expect(blocked == nil)
-        #expect(allowed?.metadata.source == .unblock("Kuwo"))
+        #expect(allowed?.metadata.source == .unblock("Luoxue"))
     }
 
     @Test func cacheUsageDeletesPartialFilesLeftByAnEarlierRun() async throws {

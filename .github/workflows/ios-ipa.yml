@@ -1,0 +1,48 @@
+name: iOS IPA
+
+# Builds the iOS app as an unsigned IPA for sideloading (AltStore, Sideloadly,
+# eSign, etc. re-sign it with your own Apple ID during installation).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Archive the iOS app (unsigned)
+        run: |
+          mkdir -p .build/ios
+          xcodebuild archive \
+            -workspace ios/KumoneIOS.xcworkspace \
+            -scheme KumoneIOS \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath .build/ios/Kun.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS=""
+
+      - name: Package the IPA
+        run: |
+          mkdir -p Payload dist
+          APP_PATH="$(find .build/ios/Kun.xcarchive/Products/Applications -maxdepth 1 -name '*.app' -print -quit)"
+          if [ -z "$APP_PATH" ]; then
+            echo "error: no .app found in the archive" >&2
+            exit 1
+          fi
+          cp -R "$APP_PATH" Payload/
+          zip -qry dist/Kun-ios.ipa Payload
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kun-ios-ipa
+          path: dist/Kun-ios.ipa
+          if-no-files-found: error

@@ -899,7 +899,7 @@ final class DownloadManager: ObservableObject {
             return String(localized: "下载失败：\(reason)")
         }
         let error = error as NSError
-        if error.code == NSURLErrorCannotFindHost || error.code == NSURLErrorDNSLookupFailed { return String(localized: "无法解析音源地址，请检查网络后重试") }
+        if error.code == NSURLErrorCannotFindHost || error.code == NSURLErrorDNSLookupFailed { return String(localized: "无法解析服务地址，请检查网络后重试") }
         return String(localized: "下载失败（\(error.domain) \(String(error.code))），请检查网络或账号权限后重试")
     }
 

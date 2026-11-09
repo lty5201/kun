@@ -30,7 +30,6 @@ extension SettingsManager {
             $lyricsAnnotation.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
             $verbatimLyrics.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
             $enableUnblock.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
-            $enabledAudioSourceIDs.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
             $showMainWindowAmbientBackground.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
             $mainWindowAmbientBackgroundIntensity.removeDuplicates().map { _ in () }.eraseToAnyPublisher()
         ]).eraseToAnyPublisher()
@@ -45,7 +44,6 @@ extension SettingsManager {
          Keys.annotation: .string(lyricsAnnotation.rawValue),
          Keys.verbatimLyrics: .boolean(verbatimLyrics),
          Keys.unblock: .boolean(enableUnblock),
-         Keys.unblockSources: .strings(enabledAudioSourceIDs.map(\.rawValue).sorted()),
          Keys.mainWindowAmbientBackground: .boolean(showMainWindowAmbientBackground),
          Keys.mainWindowAmbientBackgroundIntensity: .number(mainWindowAmbientBackgroundIntensity)]
     }
@@ -65,12 +63,11 @@ extension SettingsManager {
                     throw SyncError.invalidRecord
                 }
             case (Keys.showTranslation, .boolean), (Keys.verbatimLyrics, .boolean),
-                 (Keys.unblock, .boolean), (Keys.mainWindowAmbientBackground, .boolean),
-                 (Keys.unblockSources, .strings): break
+                 (Keys.unblock, .boolean), (Keys.mainWindowAmbientBackground, .boolean): break
             case (Keys.quality, _), (Keys.appearance, _), (Keys.annotation, _),
                  (Keys.mainWindowAmbientBackgroundIntensity, _), (Keys.showTranslation, _),
                  (Keys.verbatimLyrics, _), (Keys.unblock, _),
-                 (Keys.mainWindowAmbientBackground, _), (Keys.unblockSources, _):
+                 (Keys.mainWindowAmbientBackground, _):
                 throw SyncError.invalidRecord
             default: break
             }
@@ -89,8 +86,6 @@ extension SettingsManager {
             case (Keys.unblock, .boolean(let value)): enableUnblock = value
             case (Keys.mainWindowAmbientBackground, .boolean(let value)): showMainWindowAmbientBackground = value
             case (Keys.mainWindowAmbientBackgroundIntensity, .number(let value)): mainWindowAmbientBackgroundIntensity = value
-            case (Keys.unblockSources, .strings(let value)):
-                enabledAudioSourceIDs = Set(value.compactMap(AudioSourceID.init(rawValue:)))
             default: break
             }
         }

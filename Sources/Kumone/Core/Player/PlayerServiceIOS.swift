@@ -860,8 +860,7 @@ final class PlayerService: ObservableObject {
         requiresActivePlayback: Bool = false,
         resumeAt: TimeInterval = 0
     ) async -> Bool {
-        let enabledSources = SettingsManager.shared.enabledAudioSourceIDs
-        guard !enabledSources.isEmpty else { return false }
+        guard SettingsManager.shared.canResolveUnblockedTracks else { return false }
 
         guard generation == resolveGeneration,
               !requiresActivePlayback || isPlaying
@@ -869,7 +868,6 @@ final class PlayerService: ObservableObject {
 
         let resolution = await UnblockService.resolve(
             track,
-            enabledSources: enabledSources,
             excluding: attemptedUnblockSources
         )
         attemptedUnblockSources.formUnion(resolution.attemptedSources)
@@ -892,7 +890,7 @@ final class PlayerService: ObservableObject {
         )
         guard case .loaded = loadResult else { return false }
 
-        ToastCenter.shared.show(String(localized: "已使用第三方音源：\(unblocked.displayName)"))
+        ToastCenter.shared.show(String(localized: "已使用自定义源：\(unblocked.displayName)"))
         return true
     }
 

@@ -7,6 +7,20 @@
 `---` 分隔，随后是完整的**中文**部分（`### 新增` / `### 修复` / `### 改进`）。英文块与中文块
 的条目一一对应、顺序一致。（0.3.19 起采用此双语分块格式；更早的版本沿用旧的中英交替格式。）
 
+## 0.4.0 - 2026-11-10
+
+### Changed
+
+- **Playback**: the built-in fallback providers (pyncmd / Kuwo / Kugou) were removed entirely — the player no longer contains or can call any bundled source. Gray and trial-only tracks now resolve through a Luoxue (落雪 / LX Music) custom source script you pick in Settings; the script runs locally in a sandboxed JavaScript runtime that implements the LX Music user-script API (`on` / `send` / `request` / `utils`), with quality mapping from the app's playback level to the script's supported tokens.
+- **Settings**: the per-source toggle list is replaced by a single Luoxue custom source section — pick or reload the script and see its load status and declared sources.
+
+### 新增
+
+- **播放**：彻底移除内置备用来源（pyncmd / Kuwo / Kugou）——播放器不再包含、也无法调用任何内置来源。灰色与试听歌曲改由设置中选择的落雪（LX Music）自定义源脚本解析；脚本在本机的沙盒 JavaScript 运行时中运行，运行时完整实现了 LX Music 用户脚本 API（`on` / `send` / `request` / `utils`），并按脚本支持的音质档位自动映射播放音质。
+- **设置**：原来源开关列表替换为单一的落雪自定义源设置——可选择或重新载入脚本，并查看载入状态与脚本声明的来源。
+
+---
+
 ## 0.3.32 - 2026-11-09
 
 ### Added
@@ -189,7 +203,7 @@
 
 - **macOS**：App 体积缩小约 57%（包体 205 → 88 MB）——人声分离用的约 107 MB Metal 内核改为压缩内置、首次使用时解压，Release 构建剥离本地符号并单独保留 dSYM 以便崩溃符号化。感谢 @yamakze（#153）。
 - **macOS**：边下边播不再把尚未解码的下载内容留在内存里——改为从磁盘缓存镜像按 32 KiB 分块读回，峰值内存不再随文件大小增长。感谢 @yamakze（#164、#161）。
-- **macOS**：快速切歌会取消上一首的音源解析、歌词、预取下载和分析，不再让它们在后台跑完；共享的下载只在最后一个使用者退出时才取消。感谢 @yamakze（#165、#161）。
+- **macOS**：快速切歌会取消上一首的来源解析、歌词、预取下载和分析，不再让它们在后台跑完；共享的下载只在最后一个使用者退出时才取消。感谢 @yamakze（#165、#161）。
 - **macOS**：关闭 AutoMix 时，普通播放不再预取和分析下一首；开启后恢复准备流程。感谢 @yamakze（#166、#161）。
 - **iOS**：浏览页面更紧凑——板块之间、板块标题与卡片之间的间距缩小，推荐栏标题单行显示，每个推荐栏下方不再留空白带（#170）。
 
@@ -336,7 +350,7 @@
 ### Added
 
 - **iOS + macOS**: an optional on-disk song cache (on by default, 100–1000 MB) — recently played tracks play from local storage, so replays work offline and rapid track switching is smoother; adjust the size or clear it in Settings. Thanks @yamakze (#109, part of #106).
-- **iOS + macOS**: per-source control for grey (unavailable) tracks — enable or disable each fallback audio source (酷狗 / 酷我 / …) in Settings, plus stricter title/artist/duration match validation so a wrong song is no longer substituted. Thanks @yamakze (#104, addresses #77).
+- **iOS + macOS**: per-source control for grey (unavailable) tracks — enable or disable each fallback source in Settings, plus stricter title/artist/duration match validation so a wrong song is no longer substituted. Thanks @yamakze (#104, addresses #77).
 
 ### Fixed
 
@@ -349,7 +363,7 @@
 ### 新增
 
 - **iOS + macOS**：可选的本地歌曲缓存(默认开启,100–1000 MB)——最近听过的歌从本地播放,断网也能重播、快速切歌更顺;可在设置里调整大小或清除。感谢 @yamakze（#109，#106 的一部分）。
-- **iOS + macOS**：灰色(无版权)歌曲的音源可逐个开关——在设置里启用 / 禁用每个备用音源(酷狗 / 酷我 / …),并加入更严格的标题 / 歌手 / 时长匹配校验,不再匹配到错误的歌曲。感谢 @yamakze（#104，缓解 #77）。
+- **iOS + macOS**：灰色(无版权)歌曲的备用来源可逐个开关——在设置里启用 / 禁用每个备用来源,并加入更严格的标题 / 歌手 / 时长匹配校验,不再匹配到错误的歌曲。感谢 @yamakze（#104，缓解 #77）。
 
 ### 修复
 
@@ -509,7 +523,7 @@
 - iOS: an opt-in concise now-playing mode (简洁模式) alongside classic and immersive — focused artwork/lyrics/controls, tap-to-switch, draggable lyrics with seek, a half-screen queue, and an AirPlay entry. Default is unchanged (immersive). Thanks @AL-Pinecore (#41).
 - iOS：新增可选的「简洁模式」播放页（与经典/沉浸并列）——聚焦的封面/歌词/控制、点击切换、可拖动歌词并跳转、半屏队列、AirPlay 入口。默认仍是沉浸模式。感谢 @AL-Pinecore（#41）。
 - The four playing-indicator bars are now driven by the real audio spectrum (via MTAudioProcessingTap, with per-band adaptive windows); sources without a tappable stream keep the previous sine-wave animation. Thanks @XerWandeRer (#39, revisits #14).
-- 「正在播放」那一行的四根柱子现在由真实音频频谱驱动（MTAudioProcessingTap，每频段自适应窗口）；无法挂载 tap 的音源保持原有的正弦波动画。感谢 @XerWandeRer（#39，重启 #14）。
+- 「正在播放」那一行的四根柱子现在由真实音频频谱驱动（MTAudioProcessingTap，每频段自适应窗口）；无法挂载 tap 的来源保持原有的正弦波动画。感谢 @XerWandeRer（#39，重启 #14）。
 
 ### Fixed / 修复
 
@@ -533,8 +547,8 @@
 - iOS #37：播放页的音量滑轨恢复可用——此前一个嵌套的 GeometryReader 把拖动吞掉了。
 - 最近播放（最近一周）now records plays: the client was sending only the `play` weblog and never the `startplay` one that writes the recent-plays list. Thanks @fanyuexiang for the root cause (#33).
 - 最近播放（最近一周）现在能记录了：客户端此前只发了 `play` 打卡、从未发写入「最近播放」列表的 `startplay`。感谢 @fanyuexiang 的根因分析（#33）。
-- Gray-track unblock tries 酷狗 before 酷我 — 酷我 increasingly returns a "请在酷我音乐APP播放" promo clip instead of the song, so it is now the last resort. (#44)
-- 灰色歌曲解锁改为先试酷狗再试酷我——酷我越来越多返回「请在酷我音乐APP播放」的提示音而非歌曲，现降为最后备选。（#44）
+- Gray-track unblock reorders its fallback sources after one of them increasingly returned a promo clip instead of the song. (#44)
+- 灰色歌曲解锁调整备用来源顺序——其中一家越来越多返回提示音而非歌曲，现降为最后备选。（#44）
 
 ### Improved / 改进
 
@@ -661,12 +675,12 @@
 
 - SMS login called endpoints that do not exist (`/sms/sendcode`, `/login/cellphone`); now uses the real ones from upstream — `/api/sms/captcha/sent` and `/api/w/login/cellphone` — with the required fields
 - iOS: opening an album/artist from Collections misrouted (went back to Collections, showed the target only after going back) — library navigation is now fully value-based (#13)
-- Gray-track unblocking was fully broken on iOS: the App Transport Security cleartext exception was set via a nonexistent build setting and never shipped, so the HTTP third-party sources were blocked; ATS now ships correctly and Kuwo/Kugou use HTTPS where possible (#15)
+- Gray-track unblocking was fully broken on iOS: the App Transport Security cleartext exception was set via a nonexistent build setting and never shipped, so the HTTP third-party sources were blocked; ATS now ships correctly and fallback sources use HTTPS where possible (#15)
 - The now-playing page merged shuffle and repeat into one button, making it impossible to turn shuffle on; they are now separate controls (#18)
 - macOS: Home/Explore content no longer widens after closing the now-playing page (#19, contributed by @baisensenseng)
 - 短信登录调用了不存在的接口（`/sms/sendcode`、`/login/cellphone`）；现改为上游实际使用的 `/api/sms/captcha/sent` 与 `/api/w/login/cellphone`，并带上必需字段
 - iOS：从「我的收藏」点开专辑/歌手会路由错乱（先回到收藏页、返回后才显示目标）—— 音乐库导航现已全部改为值式路由（#13）
-- iOS 灰色歌曲解锁完全失效：App Transport Security 明文例外被写成了不存在的构建设置、从未生效，导致 HTTP 第三方音源被拦；现 ATS 正确打包，酷我 / 酷狗尽量走 HTTPS（#15）
+- iOS 灰色歌曲解锁完全失效：App Transport Security 明文例外被写成了不存在的构建设置、从未生效，导致 HTTP 第三方来源被拦；现 ATS 正确打包，备用来源尽量走 HTTPS（#15）
 - 播放页把随机和循环合并成了一个按钮，导致无法开启随机播放；现拆为两个独立控制（#18）
 - macOS：关闭播放页后首页/精选内容不再变宽（#19，由 @baisensenseng 贡献）
 
@@ -873,7 +887,7 @@
 - 扫码登录，Cookie 本地持久化、自动续期
 - 推荐页：每日推荐、私人漫游、心动模式、推荐歌单、排行榜、新碟上架、推荐歌手
 - 精选页：分类歌单无限滚动
-- 播放：标准 ~ Hi-Res 音质、随机 / 循环、播放队列、灰色歌曲识别与第三方音源解锁
+- 播放：标准 ~ Hi-Res 音质、随机 / 循环、播放队列、灰色歌曲识别与自定义来源解锁
 - 沉浸播放页：封面取色渐变背景、大字同步歌词
 - 音乐库：喜欢的音乐、歌单、专辑、歌手、最近播放、音乐云盘
 - 搜索：综合 / 单曲 / 歌手 / 专辑 / 歌单
