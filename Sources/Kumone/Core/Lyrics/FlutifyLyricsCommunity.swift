@@ -328,7 +328,7 @@ enum NeteaseTranslationSource {
     private static let versionWord = try! NSRegularExpression(
         pattern: #"\b(?:feat|ft|with|remaster\w*|live|version|ver|edit|re-?mix|mix|mono|stereo|acoustic|unplugged|from|deluxe|radio|explicit|clean|bonus|demo|single|album|extended|session)\b"#,
         options: [.caseInsensitive])
-    private static let dashSuffix = try! NSRegularExpression(pattern: #"\s+[-–—]\s+(.+)$")
+    private static let dashSuffix = try! NSRegularExpression(pattern: #"\s+[-–—]\s+(.+)$"#)
     private static let bracketed = try! NSRegularExpression(
         pattern: #"\s*[\(\[（【]([^\)\]）】]*)[\)\]）】]"#)
 
