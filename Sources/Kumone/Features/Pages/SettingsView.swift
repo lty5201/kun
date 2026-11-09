@@ -36,6 +36,8 @@ struct SettingsSheet: View {
                             dismiss()
                             openDestination(.downloaded)
                         }
+                    case .lyrics:
+                        LyricsSettingsPage()
                     case .soundEffects:
                         SoundEffectsPage()
                     }
@@ -71,6 +73,7 @@ struct SettingsView: View {
 
     fileprivate enum SettingsPage: Hashable {
         case storage
+        case lyrics
         #if os(iOS)
         case soundEffects
         #endif
@@ -136,47 +139,62 @@ struct SettingsView: View {
             AutoMixSettingsSection()
             #endif
 
-            if settings.enableUnblock {
-                Section {
-                    Button {
-                        showingLuoxueImporter = true
-                    } label: {
-                        HStack {
-                            Text("落雪自定义源")
-                            Spacer()
-                            Text(luoxueStatusText)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
-                    .accessibilityIdentifier("settingsLuoxueScriptButton")
-                    if luoxue.needsReload {
-                        Button("重新载入脚本") {
-                            Task { await luoxue.reload() }
-                        }
-                    }
-                    Text("选择落雪音乐（LX Music）自定义源脚本（.js 文件）。脚本仅在本机运行，用于解析无版权或试听歌曲的播放地址。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } header: {
-                    Text("自定义源")
-                }
-                .fileImporter(
-                    isPresented: $showingLuoxueImporter,
-                    allowedContentTypes: [.item],
-                    allowsMultipleSelection: false
-                ) { result in
-                    switch result {
-                    case .success(let urls):
-                        guard let url = urls.first else { return }
-                        Task { await luoxue.install(scriptAt: url) }
-                    case .failure:
-                        break
+            // The custom-source section is always visible — the Luoxue script
+            // is the only music source left in the app, so hiding its entry
+            // behind another toggle made the app look like it had no source
+            // management at all.
+            Section {
+                Button {
+                    showingLuoxueImporter = true
+                } label: {
+                    HStack {
+                        Text("落雪自定义源")
+                        Spacer()
+                        Text(luoxueStatusText)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
                 }
-                .onAppear {
-                    _ = LuoxueSourceManager.shared.ensureLoadedFromSettings()
+                .accessibilityIdentifier("settingsLuoxueScriptButton")
+                if luoxue.needsReload {
+                    Button("重新载入脚本") {
+                        Task { await luoxue.reload() }
+                    }
+                }
+                Text("选择落雪音乐（LX Music）自定义源脚本（.js 文件）。脚本仅在本机运行，用于解析无版权或试听歌曲的播放地址。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("自定义源")
+            }
+            .fileImporter(
+                isPresented: $showingLuoxueImporter,
+                allowedContentTypes: [.item],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    Task { await luoxue.install(scriptAt: url) }
+                case .failure:
+                    break
+                }
+            }
+            .onAppear {
+                _ = LuoxueSourceManager.shared.ensureLoadedFromSettings()
+            }
+
+            // Flutify lyrics settings entry — always visible, never hidden.
+            Section("歌词") {
+                NavigationLink(value: SettingsPage.lyrics) {
+                    Label("歌词设置", systemImage: "text.quote")
+                }
+                Toggle("显示歌词翻译", isOn: $settings.showLyricsTranslation)
+                Picker("日文歌词读音", selection: $settings.lyricsAnnotation) {
+                    ForEach(LyricsAnnotation.allCases) { annotation in
+                        Text(annotation.displayName).tag(annotation)
+                    }
                 }
             }
 
@@ -215,15 +233,6 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                 #endif
                 Toggle("点击封面打开专辑", isOn: $settings.openAlbumOnArtworkClick)
-                Toggle("显示歌词翻译", isOn: $settings.showLyricsTranslation)
-                Picker("日文歌词读音", selection: $settings.lyricsAnnotation) {
-                    ForEach(LyricsAnnotation.allCases) { annotation in
-                        Text(annotation.displayName).tag(annotation)
-                    }
-                }
-                Text("罗马音在歌词上方另起一行，汉字读音把假名标在汉字正上方；缺少官方罗马音时自动生成读音")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Toggle("主界面环境色", isOn: $settings.showMainWindowAmbientBackground)
                 if settings.showMainWindowAmbientBackground {
                     VStack(alignment: .leading, spacing: 6) {

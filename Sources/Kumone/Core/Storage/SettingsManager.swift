@@ -151,7 +151,84 @@ final class SettingsManager: ObservableObject {
         static let soundEffectPreset = "settings.soundEffectPreset"
         static let customEqualizerGains = "settings.customEqualizerGains"
         #endif
+        // Flutify lyrics settings
+        static let lyricsAutoTranslate = "settings.lyricsAutoTranslate"
+        static let lyricsExcludeInterface = "settings.lyricsExcludeInterface"
+        static let lyricsExcludedLanguages = "settings.lyricsExcludedLanguages"
+        static let lyricsScale = "settings.lyricsScale"
+        static let lyricsAlign = "settings.lyricsAlign"
+        static let lyricsFocusPosition = "settings.lyricsFocusPosition"
+        static let lyricsFallback = "settings.lyricsFallback"
+        static let lyricsSourceOrder = "settings.lyricsSourceOrder"
+        static let lyricsBilingual = "settings.lyricsBilingual"
     }
+
+    /// Flutify's `LyricsSource`: the four sources the lyrics chain uses. Not
+    /// every source is wired into this app's player, but the setting (and its
+    /// persisted order) is kept 1:1 with Flutify so the source-priority list
+    /// in settings reads the same and can be reordered.
+    enum LyricsSourceKind: String, CaseIterable, Identifiable, Codable {
+        case spotify
+        case qqMusic
+        case netease
+        case lrclib
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .spotify: return "Spotify"
+            case .qqMusic: return "QQ 音乐"
+            case .netease: return "网易云音乐"
+            case .lrclib: return "LRCLIB"
+            }
+        }
+
+        var roleText: String {
+            switch self {
+            case .spotify: return "原文，自带译文"
+            case .lrclib: return "原文与译文"
+            default: return "原文与中文译词"
+            }
+        }
+
+        static let defaultOrder: [LyricsSourceKind] = [.spotify, .qqMusic, .netease, .lrclib]
+
+        /// Same normalisation as Flutify: drop unknown / duplicate entries,
+        /// then append anything missing in the default order.
+        static func parseOrder(_ raw: [String]) -> [LyricsSourceKind] {
+            var seen: [LyricsSourceKind] = []
+            for name in raw {
+                if let source = LyricsSourceKind(rawValue: name), !seen.contains(source) {
+                    seen.append(source)
+                }
+            }
+            for source in defaultOrder where !seen.contains(source) {
+                seen.append(source)
+            }
+            return seen
+        }
+    }
+
+    /// Flutify's `LyricsAlign`.
+    enum LyricsAlign: String, CaseIterable, Identifiable {
+        case left
+        case center
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .left: return "左对齐"
+            case .center: return "居中"
+            }
+        }
+    }
+
+    /// Flutify's lyrics scaling bounds (`minLyricsScale` / `maxLyricsScale`).
+    static let lyricsScaleRange: ClosedRange<Double> = 0.7...1.6
+    /// Flutify's focus-position bounds.
+    static let lyricsFocusPositionRange: ClosedRange<Double> = 0.05...0.55
 
     @Published var audioQuality: AudioQuality {
         didSet { UserDefaults.standard.set(audioQuality.rawValue, forKey: Keys.quality) }
@@ -216,6 +293,47 @@ final class SettingsManager: ObservableObject {
 
     @Published var showLyricsTranslation: Bool {
         didSet { UserDefaults.standard.set(showLyricsTranslation, forKey: Keys.showTranslation) }
+    }
+
+    // MARK: - Flutify lyrics settings (1:1 with the LyricsSection)
+    //
+    // Every item Flutify's lyrics section exposes, in the same order, so a
+    // user coming from Flutify finds the same switches and sliders.
+
+    @Published var lyricsAutoTranslate: Bool {
+        didSet { UserDefaults.standard.set(lyricsAutoTranslate, forKey: Keys.lyricsAutoTranslate) }
+    }
+
+    @Published var lyricsExcludeInterfaceLanguage: Bool {
+        didSet { UserDefaults.standard.set(lyricsExcludeInterfaceLanguage, forKey: Keys.lyricsExcludeInterface) }
+    }
+
+    @Published var lyricsExcludedLanguages: [String] {
+        didSet { UserDefaults.standard.set(lyricsExcludedLanguages, forKey: Keys.lyricsExcludedLanguages) }
+    }
+
+    @Published var lyricsScale: Double {
+        didSet { UserDefaults.standard.set(lyricsScale, forKey: Keys.lyricsScale) }
+    }
+
+    @Published var lyricsAlign: LyricsAlign {
+        didSet { UserDefaults.standard.set(lyricsAlign.rawValue, forKey: Keys.lyricsAlign) }
+    }
+
+    @Published var lyricsFocusPosition: Double {
+        didSet { UserDefaults.standard.set(lyricsFocusPosition, forKey: Keys.lyricsFocusPosition) }
+    }
+
+    @Published var lyricsFallback: Bool {
+        didSet { UserDefaults.standard.set(lyricsFallback, forKey: Keys.lyricsFallback) }
+    }
+
+    @Published var lyricsSourceOrder: [LyricsSourceKind] {
+        didSet { UserDefaults.standard.set(lyricsSourceOrder.map(\.rawValue), forKey: Keys.lyricsSourceOrder) }
+    }
+
+    @Published var lyricsBilingual: Bool {
+        didSet { UserDefaults.standard.set(lyricsBilingual, forKey: Keys.lyricsBilingual) }
     }
 
     /// Check for updates on launch. When off, no update sheet appears
@@ -476,5 +594,26 @@ final class SettingsManager: ObservableObject {
             from: defaults, key: Keys.customEqualizerGains).gains
         publishSoundEffectParameters()
         #endif
+
+        // Flutify lyrics settings: defaults identical to Flutify's
+        // `AppPreferences` (lyricsScale 1.0, focus 0.16, fallback on, source
+        // order spotify → qq → netease → lrclib, no excluded languages, auto
+        // translate + exclude interface on, bilingual off).
+        lyricsAutoTranslate = defaults.object(forKey: Keys.lyricsAutoTranslate) as? Bool ?? true
+        lyricsExcludeInterfaceLanguage =
+            defaults.object(forKey: Keys.lyricsExcludeInterface) as? Bool ?? true
+        lyricsExcludedLanguages =
+            defaults.stringArray(forKey: Keys.lyricsExcludedLanguages) ?? []
+        let storedLyricsScale = defaults.object(forKey: Keys.lyricsScale) as? Double ?? 1
+        lyricsScale = min(max(storedLyricsScale, Self.lyricsScaleRange.lowerBound),
+                          Self.lyricsScaleRange.upperBound)
+        lyricsAlign = defaults.string(forKey: Keys.lyricsAlign).flatMap(LyricsAlign.init) ?? .left
+        let storedLyricsFocusPosition = defaults.object(forKey: Keys.lyricsFocusPosition) as? Double ?? 0.16
+        lyricsFocusPosition = min(max(storedLyricsFocusPosition, Self.lyricsFocusPositionRange.lowerBound),
+                                  Self.lyricsFocusPositionRange.upperBound)
+        lyricsFallback = defaults.object(forKey: Keys.lyricsFallback) as? Bool ?? true
+        lyricsSourceOrder = Self.LyricsSourceKind.parseOrder(
+            defaults.stringArray(forKey: Keys.lyricsSourceOrder) ?? [])
+        lyricsBilingual = defaults.object(forKey: Keys.lyricsBilingual) as? Bool ?? false
     }
 }
