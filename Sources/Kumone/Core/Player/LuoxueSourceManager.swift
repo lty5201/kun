@@ -59,10 +59,28 @@ final class LuoxueSourceManager: ObservableObject {
     }
 
     private var runtimes: [UUID: LuoxueScriptRuntime] = [:]
-    private let lock = NSLock()
-    private var anyReady = false
-    private var netEaseCapable = false
+    /// Lock-guarded readiness flags, readable from any actor (playback code
+    /// polls `isReady` off the main actor). Held by a nonisolated Sendable
+    /// store so `nonisolated` accessors can reach it.
+    private let readiness = LuoxueReadinessStore()
     private var autoLoadAttempted = false
+
+    /// Immutable `let` of a Sendable type: safe to touch from any context.
+    private final class LuoxueReadinessStore: @unchecked Sendable {
+        private let lock = NSLock()
+        private var ready = false
+        private var netEase = false
+
+        func set(ready: Bool, netEase: Bool) {
+            lock.withLock {
+                self.ready = ready
+                self.netEase = netEase
+            }
+        }
+
+        var isReady: Bool { lock.withLock { ready } }
+        var supportsNetEase: Bool { lock.withLock { netEase } }
+    }
 
     /// Shared ephemeral session for online script downloads.
     private let downloadSession: URLSession
@@ -79,14 +97,14 @@ final class LuoxueSourceManager: ObservableObject {
     // MARK: - Read-only state for playback
 
     /// True once at least one enabled script has loaded and reported sources.
-    var isReady: Bool {
-        lock.withLock { anyReady }
+    nonisolated var isReady: Bool {
+        readiness.isReady
     }
 
     /// Whether any enabled loaded script can serve NetEase tracks — the only
     /// platform this player talks to.
-    var supportsNetEase: Bool {
-        lock.withLock { netEaseCapable }
+    nonisolated var supportsNetEase: Bool {
+        readiness.supportsNetEase
     }
 
     /// Whether at least one source is installed at all.
@@ -228,13 +246,13 @@ final class LuoxueSourceManager: ObservableObject {
         let script: String
         do {
             script = try await downloadScript(from: url)
-        } catch ImportError.downloadFailed {
+        } catch ImportError.downloadFailed(let reason) {
             // One retry through the jsdelivr mirror for GitHub links.
             if let mirror = LuoxueURLConverter.jsdelivrFallback(for: direct),
                let mirrorURL = URL(string: mirror) {
                 script = try await downloadScript(from: mirrorURL)
             } else {
-                throw ImportError.downloadFailed(error.localizedDescription)
+                throw ImportError.downloadFailed(reason)
             }
         }
 
@@ -326,9 +344,9 @@ final class LuoxueSourceManager: ObservableObject {
             let script: String
             do {
                 script = try await downloadScript(from: url)
-            } catch ImportError.downloadFailed {
+            } catch ImportError.downloadFailed(let reason) {
                 guard let mirror = LuoxueURLConverter.jsdelivrFallback(for: direct),
-                      let mirrorURL = URL(string: mirror) else { throw ImportError.downloadFailed("网络错误") }
+                      let mirrorURL = URL(string: mirror) else { throw ImportError.downloadFailed(reason) }
                 script = try await downloadScript(from: mirrorURL)
             }
             try? script.data(using: .utf8)?.write(to: entries[index].source.fileURL, options: .atomic)
@@ -413,10 +431,7 @@ final class LuoxueSourceManager: ObservableObject {
                 if sources.contains("wy") { netEase = true }
             }
         }
-        lock.lock()
-        anyReady = ready
-        netEaseCapable = netEase
-        lock.unlock()
+        readiness.set(ready: ready, netEase: netEase)
     }
 
     // MARK: - Health check (音源体检)
