@@ -660,7 +660,6 @@ final class SettingsManager: ObservableObject {
             from: defaults, key: Keys.soundEffectPreset)
         customEqualizerGains = SoundEffectPreferences.customConfiguration(
             from: defaults, key: Keys.customEqualizerGains).gains
-        publishSoundEffectParameters()
         #endif
 
         // Flutify lyrics settings: defaults identical to Flutify's
@@ -683,5 +682,12 @@ final class SettingsManager: ObservableObject {
         lyricsSourceOrder = Self.LyricsSourceKind.parseOrder(
             defaults.stringArray(forKey: Keys.lyricsSourceOrder) ?? [])
         lyricsBilingual = defaults.object(forKey: Keys.lyricsBilingual) as? Bool ?? false
+
+        // Every stored property is assigned by now, so it is finally safe to
+        // publish the DSP parameters (calling it earlier trips Swift's
+        // definite-initialization check on the iOS target).
+        #if os(iOS)
+        publishSoundEffectParameters()
+        #endif
     }
 }
