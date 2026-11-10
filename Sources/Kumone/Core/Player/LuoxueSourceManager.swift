@@ -194,6 +194,19 @@ final class LuoxueSourceManager: ObservableObject {
 
     // MARK: - Import
 
+    /// All enabled sources failed to resolve a track; carries one line per
+    /// source so the user can see exactly which source failed and why.
+    struct AggregateResolveError: LocalizedError {
+        let failures: [String]
+
+        var errorDescription: String? {
+            if failures.isEmpty {
+                return String(localized: "没有已启用的自定义源")
+            }
+            return failures.prefix(3).joined(separator: "；")
+        }
+    }
+
     /// Imports scripts picked from the local file picker (本地导入). Multiple
     /// files can be selected at once, and a selected folder has every `.js`
     /// inside imported. Each script becomes its own source; per-file failures
@@ -537,6 +550,7 @@ final class LuoxueSourceManager: ObservableObject {
     /// list order; the first script that produces a URL wins.
     func resolve(track: Track) async throws -> ResolvedAudioSource? {
         let qualityPreference = SettingsManager.shared.audioQuality
+        var failures: [String] = []
         for entry in entries where entry.enabled {
             guard let runtime = runtimes[entry.id] else { continue }
             let allCapabilities = await runtime.capabilities()
@@ -553,10 +567,11 @@ final class LuoxueSourceManager: ObservableObject {
                 throw CancellationError()
             } catch {
                 Self.log.error("source=\(entry.name, privacy: .public) resolve failed: \(error.localizedDescription, privacy: .public)")
+                failures.append("\(entry.name)：\(error.localizedDescription)")
                 continue
             }
         }
-        throw LuoxueScriptError.notLoaded
+        throw AggregateResolveError(failures: failures)
     }
 
     // MARK: - Quality mapping

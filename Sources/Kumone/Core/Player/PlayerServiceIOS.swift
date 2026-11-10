@@ -188,6 +188,9 @@ final class PlayerService: ObservableObject {
     private var consecutiveFailures = 0
     private var attemptedUnblockSources: Set<AudioSourceID> = []
     private var currentUnblockSourceID: AudioSourceID?
+    /// Why the last custom-source resolution failed, so the unplayable toast
+    /// can say more than just "VIP 专属".
+    private var lastUnblockFailure: String?
     /// The resolve generation that already spent its one reload after a
     /// failed item, so a reload that fails too gives up instead of looping.
     private var itemRetryGeneration: Int?
@@ -844,7 +847,9 @@ final class PlayerService: ObservableObject {
         }
 
         // The service refused — try third-party sources (unblock-style).
+        var unblockAttempted = false
         if resolvedURL == nil || data?.freeTrialInfo != nil, allowsUnblock {
+            unblockAttempted = true
             if await resolveAndLoadUnblocked(track, generation: generation, resumeAt: resumeAt) { return }
         }
         guard generation == resolveGeneration else { return }
@@ -865,7 +870,16 @@ final class PlayerService: ObservableObject {
         servedQuality = data?.level
         if data?.freeTrialInfo != nil {
             isTrial = true
-            ToastCenter.shared.show(String(localized: "VIP 歌曲，当前为试听片段"))
+            // Say WHY only a trial clip plays, instead of a generic banner:
+            // the fix (importing a working source) is then obvious.
+            if unblockAttempted {
+                // resolveAndLoadUnblocked already toasted the per-source
+                // failure reason.
+            } else if !SettingsManager.shared.enableUnblock {
+                ToastCenter.shared.show(String(localized: "VIP 试听片段（设置里的“灰色歌曲解锁”已关闭）"))
+            } else {
+                ToastCenter.shared.show(String(localized: "VIP 试听片段（未安装可用的自定义源，导入后可播放完整版）"))
+            }
         }
         _ = await loadResolvedURL(track, url: url, durationMS: data?.time, generation: generation, resumeAt: resumeAt)
     }
@@ -887,11 +901,20 @@ final class PlayerService: ObservableObject {
             excluding: attemptedUnblockSources
         )
         attemptedUnblockSources.formUnion(resolution.attemptedSources)
-        guard let unblocked = resolution.source else { return false }
+        guard let unblocked = resolution.source else {
+            // Surface why every source failed — a silent fallback to the
+            // trial clip hides broken scripts and looks like "VIP can't play".
+            lastUnblockFailure = resolution.failureReason
+            if let reason = resolution.failureReason {
+                ToastCenter.shared.show(String(localized: "自定义源解析失败：\(reason)"))
+            }
+            return false
+        }
         guard generation == resolveGeneration,
               !requiresActivePlayback || isPlaying
         else { return false }
 
+        lastUnblockFailure = nil
         currentUnblockSourceID = unblocked.id
         unblockSource = unblocked.displayName
         servedQuality = nil
@@ -915,7 +938,8 @@ final class PlayerService: ObservableObject {
         let reason = track.playability(privilege: nil,
                                        isLoggedIn: AccountStore.shared.isLoggedIn,
                                        vipType: AccountStore.shared.vipType).reason
-        ToastCenter.shared.show(String(localized: "《\(track.name)》无法播放\(reason.map { "：\($0)" } ?? "")"))
+        let unblockDetail = lastUnblockFailure.map { String(localized: "（自定义源：\($0)）") } ?? ""
+        ToastCenter.shared.show(String(localized: "《\(track.name)》无法播放\(reason.map { "：\($0)" } ?? "")\(unblockDetail)"))
         guard isPlaying else {
             engine.replaceCurrentItem(with: nil)
             releaseCurrentPlaybackResources()

@@ -10,6 +10,9 @@ enum UnblockService {
     struct Resolution {
         let source: ResolvedAudioSource?
         let attemptedSources: Set<AudioSourceID>
+        /// Why resolution failed, shown to the user so a silent fallback to
+        /// the trial clip never hides the real cause.
+        var failureReason: String? = nil
     }
 
     static func resolve(
@@ -26,7 +29,7 @@ enum UnblockService {
         } catch {
             if Task.isCancelled { return Resolution(source: nil, attemptedSources: [.luoxue]) }
             log.error("source=luoxue operation=resolve error=\(error.localizedDescription, privacy: .public)")
-            return Resolution(source: nil, attemptedSources: [.luoxue])
+            return Resolution(source: nil, attemptedSources: [.luoxue], failureReason: error.localizedDescription)
         }
     }
 }
