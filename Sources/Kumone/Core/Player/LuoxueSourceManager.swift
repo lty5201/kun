@@ -66,6 +66,7 @@ final class LuoxueSourceManager: ObservableObject {
     /// store so `nonisolated` accessors can reach it.
     private let readiness = LuoxueReadinessStore()
     private var autoLoadAttempted = false
+    private var lastAutoLoadAttempt: Date?
 
     /// Immutable `let` of a Sendable type: safe to touch from any context.
     private final class LuoxueReadinessStore: @unchecked Sendable {
@@ -183,9 +184,20 @@ final class LuoxueSourceManager: ObservableObject {
     @discardableResult
     nonisolated func ensureLoadedFromSettings() -> Bool {
         Task { @MainActor in
-            guard !autoLoadAttempted else { return }
+            // Retry failed loads with a cooldown instead of loading only once
+            // per session: a source whose init timed out on a slow network at
+            // launch gets another chance on the next playback attempt.
+            let now = Date()
+            if autoLoadAttempted,
+               let last = lastAutoLoadAttempt,
+               now.timeIntervalSince(last) < 30 {
+                return
+            }
             autoLoadAttempted = true
+            lastAutoLoadAttempt = now
             for index in entries.indices where entries[index].enabled {
+                // Ready sources are left alone; only failed/idle ones reload.
+                if case .ready = entries[index].state { continue }
                 await loadEntry(at: index)
             }
         }
@@ -203,7 +215,11 @@ final class LuoxueSourceManager: ObservableObject {
             if failures.isEmpty {
                 return String(localized: "没有已启用的自定义源")
             }
-            return failures.prefix(3).joined(separator: "；")
+            let shown = failures.prefix(6).joined(separator: "；")
+            if failures.count > 6 {
+                return shown + String(localized: "；等\(failures.count)个源全部失败")
+            }
+            return shown
         }
     }
 
@@ -399,7 +415,11 @@ final class LuoxueSourceManager: ObservableObject {
         entries.append(Entry(source: source, state: .loading))
         persist()
         Self.log.info("installed source: \(source.name, privacy: .public)")
-        await loadEntry(at: entries.count - 1)
+        // Load in the background: with a 10 s init grace period, awaiting the
+        // load here would hold the batch-import alert hostage for up to 10 s
+        // per script. The entry already shows 加载中 in the list.
+        let sourceID = source.id
+        Task { await loadEntry(id: sourceID) }
     }
 
     // MARK: - Per-source lifecycle
@@ -442,6 +462,13 @@ final class LuoxueSourceManager: ObservableObject {
     private func extractName(from script: String, existing: String) -> String? {
         let name = LuoxueScriptMetadata.name(in: script, fallback: existing)
         return name == existing ? nil : name
+    }
+
+    /// Loads one entry by id, so callers never hold a stale index while other
+    /// operations mutate `entries`.
+    private func loadEntry(id: UUID) async {
+        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
+        await loadEntry(at: index)
     }
 
     private func updateName(_ source: LuoxueInstalledSource, _ name: String) -> LuoxueInstalledSource {

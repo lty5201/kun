@@ -19,14 +19,14 @@ enum LuoxueScriptError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .noScript: return "No custom source script installed"
-        case .notLoaded: return "Custom source script is not loaded"
-        case .scriptInitFailed(let reason): return "Custom source script failed to initialize: \(reason)"
-        case .scriptThrew(let reason): return "Custom source script error: \(reason)"
-        case .noRequestHandler: return "Custom source script registered no request handler"
-        case .noMusicURL: return "Custom source script returned no stream URL"
-        case .invalidURL(let value): return "Custom source script returned an invalid URL: \(value)"
-        case .timedOut: return "Custom source script timed out"
+        case .noScript: return String(localized: "未安装自定义源脚本")
+        case .notLoaded: return String(localized: "脚本未加载（初始化失败或超时）")
+        case .scriptInitFailed(let reason): return String(localized: "脚本初始化失败：\(reason)")
+        case .scriptThrew(let reason): return String(localized: "脚本错误：\(reason)")
+        case .noRequestHandler: return String(localized: "脚本未注册请求处理器")
+        case .noMusicURL: return String(localized: "脚本未返回播放链接")
+        case .invalidURL(let value): return String(localized: "脚本返回了无效链接：\(value)")
+        case .timedOut: return String(localized: "脚本超时")
         }
     }
 }
@@ -343,9 +343,12 @@ final class LuoxueScriptRuntime {
                     return
                 }
 
-                // Give asynchronously-initializing scripts a short grace period
-                // before declaring the script dead.
-                self.queue.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                // Give asynchronously-initializing scripts a grace period
+                // before declaring the script dead. Many sources run a
+                // network version check in their init before reporting
+                // `inited`; on real-world networks that regularly takes more
+                // than a couple of seconds, so the deadline is generous.
+                self.queue.asyncAfter(deadline: .now() + 10.0) { [weak self] in
                     guard let self else { return }
                     let inited = !self.capabilities.isEmpty
                     let failure = self.initErrorMessage
