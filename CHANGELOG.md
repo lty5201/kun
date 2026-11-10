@@ -7,6 +7,26 @@
 `---` 分隔，随后是完整的**中文**部分（`### 新增` / `### 修复` / `### 改进`）。英文块与中文块
 的条目一一对应、顺序一致。（0.3.19 起采用此双语分块格式；更早的版本沿用旧的中英交替格式。）
 
+## 0.4.2 - 2026-11-10
+
+### Improved
+
+- **Custom sources (iOS)**: the Luoxue (落雪) custom-source engine was rebuilt as a one-to-one replica of the 畅怡守 (KMusic) app's implementation: every enabled script now loads into ONE shared JS context in list order (each with its own `lx.currentScriptInfo`), request handlers accumulate into a shared list, and resolution walks handler-by-handler and quality-by-quality (best first) exactly like the reference's `resolveMusicUrlWithFallback` / `retryWithLowerQualityIfPossible` chain. The `lx` host API now matches KMusic piece for piece — console (with group/groupEnd), atob/btoa, `utils.buffer` + `utils.zlib` (native `_inflateSync`/`_deflateSync` plus Promise wrappers), the hybrid JSON body wrapper (`.json`/`.text`/`.data`/`.raw`), the CommonJS adapter (`module.exports.musicUrl` + `.sources`), the cerumusic compat layer, `follow_max` redirect control, and the lx-music-mobile User-Agent on every script request. When every handler fails, the last URL the script fetched via `lx.request` is used as the final fallback, just like the reference's `lastRequestResolvedMusicURL`. The rich NetEase `musicInfo` payload (songmid / songId / hash / strMediaMid / copyrightId / mediaId / singer / interval / albumName) is sent to handlers. UI wording aligned with the reference app (音源健康检测, 输入脚本 URL（支持 GitHub）, 暂无自定义源, 该源还没有绑定 URL).
+
+### Fixed
+
+- **Custom sources (iOS)**: sources whose scripts send `inited` asynchronously no longer stall the whole load; scripts that fail to initialize are recorded individually while the rest keep running, and loading completes as soon as every script has reported instead of always waiting out the full grace period.
+
+### 改进
+
+- **自定义音源（iOS）**：落雪自定义音源引擎按畅怡守（KMusic）的实现一比一重写：所有已启用脚本按列表顺序载入同一个共享 JS 上下文（各自注入 `lx.currentScriptInfo`），请求处理器累积到同一列表，解析时逐个处理器、逐档音质（从高到低）依次尝试，与参考实现的 `resolveMusicUrlWithFallback` / `retryWithLowerQualityIfPossible` 链完全一致。`lx` 宿主 API 与 KMusic 逐项对齐——console（含 group/groupEnd）、atob/btoa、`utils.buffer` 与 `utils.zlib`（原生 `_inflateSync`/`_deflateSync` 加 Promise 封装）、JSON 混合 body 包装（`.json`/`.text`/`.data`/`.raw`）、CommonJS 适配器（`module.exports.musicUrl` + `.sources`）、cerumusic 兼容层、`follow_max` 重定向控制，以及所有脚本请求附带 lx-music-mobile User-Agent。全部处理器失败时，以脚本经 `lx.request` 抓到的最后一个链接兜底，与参考实现的 `lastRequestResolvedMusicURL` 一致。处理器收到完整的网易云 `musicInfo`（songmid / songId / hash / strMediaMid / copyrightId / mediaId / singer / interval / albumName）。界面文案同步参考应用（音源健康检测、输入脚本 URL（支持 GitHub）、暂无自定义源、该源还没有绑定 URL）。
+
+### 修复
+
+- **自定义音源（iOS）**：异步上报 `inited` 的脚本不再拖住整体加载；初始化失败的脚本单独记录、其余照常运行，且所有脚本上报完毕即完成加载，不必等满整个宽限期。
+
+---
+
 ## 0.4.1 - 2026-11-10
 
 ### Fixed

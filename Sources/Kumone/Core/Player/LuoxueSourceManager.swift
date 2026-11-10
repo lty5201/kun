@@ -6,9 +6,15 @@ import os.log
 /// installation (local / online / pasted), the enabled list and the
 /// gray-track stream resolution that goes through them.
 ///
-/// Multiple scripts may be installed at once; each gets its own
-/// `LuoxueScriptRuntime` (its own JSContext on its own serial queue).
-/// Enabled sources are tried in list order, first successful resolution wins.
+/// Exactly like the reference app (畅怡守/KMusic), every ENABLED script is
+/// loaded into ONE shared engine (one JSContext on one serial queue) in list
+/// order; each script registers request handlers into a shared list.
+/// Resolution walks handlers in registration order and qualities within each
+/// handler until one produces a URL — the reference app's
+/// `resolveMusicUrlWithFallback` / `retryWithLowerQualityIfPossible`
+/// / "retry with next JS handler" chain.
+///
+/// Any change to the enabled set reloads the whole engine.
 ///
 /// Published state is meant for the management UI; `isReady` is a
 /// lock-guarded flag that playback code may read from any thread.
@@ -60,7 +66,14 @@ final class LuoxueSourceManager: ObservableObject {
         var detail: String
     }
 
-    private var runtimes: [UUID: LuoxueScriptRuntime] = [:]
+    /// The ONE shared engine every enabled script is loaded into.
+    private var engine: LxScriptEngine?
+    /// True when the enabled set / script files changed since the last load.
+    private var engineDirty = true
+    /// Guards against overlapping reloads.
+    private var engineLoading = false
+    /// Last loaded `sourceId -> qualitys`, merged across every script.
+    private var engineCapabilities: [String: [String]] = [:]
     /// Lock-guarded readiness flags, readable from any actor (playback code
     /// polls `isReady` off the main actor). Held by a nonisolated Sendable
     /// store so `nonisolated` accessors can reach it.
@@ -179,8 +192,8 @@ final class LuoxueSourceManager: ObservableObject {
 
     // MARK: - Auto load
 
-    /// Loads every enabled script once, after the first access. Safe to call
-    /// repeatedly from any thread.
+    /// Loads every enabled script into the shared engine once, after the
+    /// first access. Safe to call repeatedly from any thread.
     @discardableResult
     nonisolated func ensureLoadedFromSettings() -> Bool {
         Task { @MainActor in
@@ -195,11 +208,7 @@ final class LuoxueSourceManager: ObservableObject {
             }
             autoLoadAttempted = true
             lastAutoLoadAttempt = now
-            for index in entries.indices where entries[index].enabled {
-                // Ready sources are left alone; only failed/idle ones reload.
-                if case .ready = entries[index].state { continue }
-                await loadEntry(at: index)
-            }
+            if engineDirty || !isReady { await reloadEngine() }
         }
         return isReady
     }
@@ -416,18 +425,18 @@ final class LuoxueSourceManager: ObservableObject {
         persist()
         Self.log.info("installed source: \(source.name, privacy: .public)")
         // Load in the background: with a 10 s init grace period, awaiting the
-        // load here would hold the batch-import alert hostage for up to 10 s
-        // per script. The entry already shows 加载中 in the list.
-        let sourceID = source.id
-        Task { await loadEntry(id: sourceID) }
+        // load here would hold the batch-import alert hostage. The entry
+        // already shows 加载中 in the list.
+        engineDirty = true
+        Task { await reloadEngine() }
     }
 
     // MARK: - Per-source lifecycle
 
-    /// Reloads one installed source (刷新).
+    /// Reloads one installed source (刷新). With the single shared engine,
+    /// refreshing one source reloads the whole engine.
     func refresh(id: UUID) async {
-        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
-        await loadEntry(at: index)
+        await reloadEngine()
     }
 
     /// Re-downloads an online source from its origin URL, then reloads.
@@ -456,19 +465,12 @@ final class LuoxueSourceManager: ObservableObject {
         } catch {
             entries[index].state = .failed(error.localizedDescription)
         }
-        await loadEntry(at: index)
+        await reloadEngine()
     }
 
     private func extractName(from script: String, existing: String) -> String? {
         let name = LuoxueScriptMetadata.name(in: script, fallback: existing)
         return name == existing ? nil : name
-    }
-
-    /// Loads one entry by id, so callers never hold a stale index while other
-    /// operations mutate `entries`.
-    private func loadEntry(id: UUID) async {
-        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
-        await loadEntry(at: index)
     }
 
     private func updateName(_ source: LuoxueInstalledSource, _ name: String) -> LuoxueInstalledSource {
@@ -477,15 +479,16 @@ final class LuoxueSourceManager: ObservableObject {
         return updated
     }
 
-    /// Enables / disables a source without reloading it (开关).
+    /// Enables / disables a source (开关). The shared engine only loads
+    /// enabled scripts, so any toggle reloads it.
     func setEnabled(_ enabled: Bool, id: UUID) {
         guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
         entries[index].source.enabled = enabled
         persist()
-        if enabled, case .idle = entries[index].state {
-            Task { await loadEntry(at: index) }
-        }
+        entries[index].state = .idle
+        engineDirty = true
         refreshReadiness()
+        Task { await reloadEngine() }
     }
 
     /// Deletes a source and its script file (删除).
@@ -493,37 +496,84 @@ final class LuoxueSourceManager: ObservableObject {
         guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
         let source = entries[index].source
         entries.remove(at: index)
-        runtimes.removeValue(forKey: id)
         persist()
         try? FileManager.default.removeItem(at: source.fileURL)
         Self.log.info("removed source: \(source.name, privacy: .public)")
+        engineDirty = true
         refreshReadiness()
+        Task { await reloadEngine() }
     }
 
-    private func loadEntry(at index: Int) async {
-        let source = entries[index].source
-        entries[index].state = .loading
-        do {
-            let script = try String(contentsOfFile: source.filePath, encoding: .utf8)
-            guard !script.isEmpty else {
-                entries[index].state = .failed(String(localized: "脚本文件为空"))
-                refreshReadiness()
-                return
+    /// Loads every ENABLED script into a fresh shared engine — the reference
+    /// app's `loadScripts`: one context, every script in list order, each
+    /// with its own `currentScriptInfo`. Per-script outcomes come back in
+    /// `scriptResults` and feed the per-row states in the UI.
+    private func reloadEngine() async {
+        guard !engineLoading else { return }
+        engineLoading = true
+        defer { engineLoading = false }
+
+        let enabledEntries = entries.filter(\.enabled)
+        for index in entries.indices where entries[index].enabled {
+            entries[index].state = .loading
+        }
+
+        guard !enabledEntries.isEmpty else {
+            engine = nil
+            engineCapabilities = [:]
+            engineDirty = false
+            for index in entries.indices { entries[index].state = .idle }
+            refreshReadiness()
+            return
+        }
+
+        var inputs: [LxScriptInput] = []
+        for entry in enabledEntries {
+            guard let script = try? String(contentsOfFile: entry.source.filePath, encoding: .utf8),
+                  !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                entries.firstIndex(where: { $0.id == entry.id }).map { entries[$0].state = .failed(String(localized: "脚本文件为空")) }
+                continue
             }
-            let runtime = runtimes[source.id] ?? LuoxueScriptRuntime()
-            runtimes[source.id] = runtime
-            let capabilities = try await runtime.load(
-                script: script, env: Self.environmentName(), version: Self.appVersion())
-            let keys = capabilities.keys.sorted()
-            entries[index].state = capabilities.isEmpty
-                ? .failed(String(localized: "脚本未声明任何来源"))
-                : .ready(sources: keys)
-            if !capabilities.isEmpty && capabilities["wy"] == nil {
-                Self.log.warning("source \(source.name, privacy: .public) has no 'wy' source")
+            inputs.append(LxScriptInput(
+                id: entry.id,
+                name: entry.name,
+                meta: LuoxueScriptMetadata.meta(in: script),
+                script: script))
+        }
+
+        let newEngine = LxScriptEngine()
+        do {
+            let result = try await newEngine.load(
+                scripts: inputs,
+                env: Self.environmentName(),
+                version: Self.appVersion())
+            engine = newEngine
+            engineCapabilities = result.capabilities
+            engineDirty = false
+            for index in entries.indices where entries[index].enabled {
+                let entry = entries[index]
+                if let scriptResult = result.scriptResults[entry.id] {
+                    if let error = scriptResult.error {
+                        entries[index].state = .failed(error)
+                    } else if scriptResult.sources.isEmpty {
+                        entries[index].state = .failed(String(localized: "脚本未声明任何来源"))
+                    } else {
+                        entries[index].state = .ready(sources: scriptResult.sources)
+                        if !scriptResult.sources.contains("wy") {
+                            Self.log.warning("source \(entry.name, privacy: .public) has no 'wy' source")
+                        }
+                    }
+                } else {
+                    entries[index].state = .failed(String(localized: "脚本文件为空"))
+                }
             }
         } catch {
-            entries[index].state = .failed(error.localizedDescription)
             Self.log.error("load failed: \(error.localizedDescription, privacy: .public)")
+            engine = nil
+            engineCapabilities = [:]
+            for index in entries.indices where entries[index].enabled {
+                entries[index].state = .failed(error.localizedDescription)
+            }
         }
         refreshReadiness()
     }
@@ -545,9 +595,9 @@ final class LuoxueSourceManager: ObservableObject {
     /// Reloads every installed source and reports per-source status.
     func checkAll() async -> [CheckResult] {
         var results: [CheckResult] = []
-        for index in entries.indices {
-            await loadEntry(at: index)
-            let entry = entries[index]
+        engineDirty = true
+        await reloadEngine()
+        for entry in entries {
             let ok: Bool
             let detail: String
             switch entry.state {
@@ -595,43 +645,62 @@ final class LuoxueSourceManager: ObservableObject {
         return headers
     }
 
-    /// Resolves a gray track's stream URL through the enabled sources, in
-    /// list order; the first script that produces a URL wins.
+    /// The `musicInfo` payload handed to scripts, matching the reference
+    /// app's rich NetEase mapping — scripts read any of `songmid`, `songId`,
+    /// `hash`, `strMediaMid`, `copyrightId` or `mediaId` depending on which
+    /// platform they route to.
+    static func musicInfoPayload(for track: Track) -> [String: Any] {
+        let id = String(track.id)
+        return [
+            "songmid": id,
+            "id": id,
+            "songId": id,
+            "hash": id,
+            "strMediaMid": id,
+            "copyrightId": id,
+            "mediaId": id,
+            "name": track.name,
+            "singer": track.artistNames,
+            "source": "wy",
+            "interval": Int(track.duration),
+            "albumName": track.album.name,
+            "albumId": String(track.album.id),
+        ]
+    }
+
+    /// Resolves a gray track's stream URL through the shared engine: every
+    /// registered handler in order, every quality candidate within each
+    /// handler (best first), then — the reference app's final fallback — the
+    /// last link the script itself fetched via `lx.request`.
     func resolve(track: Track) async throws -> ResolvedAudioSource? {
-        let qualityPreference = SettingsManager.shared.audioQuality
-        var failures: [String] = []
-        for entry in entries where entry.enabled {
-            guard let runtime = runtimes[entry.id] else { continue }
-            let allCapabilities = await runtime.capabilities()
-            let candidates = Self.lxQualityCandidates(
-                for: qualityPreference,
-                supported: allCapabilities["wy"]?.qualitys)
-            // Try the preferred quality first; if the source rejects it,
-            // downgrade through the remaining candidates (e.g. 320k -> 128k)
-            // before giving up on this source — the same fallback the
-            // reference apps use for VIP-gated tracks.
-            var sourceFailures: [String] = []
-            for quality in candidates {
-                do {
-                    let resolved = try await runtime.resolveMusicURL(source: "wy", songID: track.id, quality: quality)
-                    return ResolvedAudioSource(
-                        id: .luoxue,
-                        displayName: AudioSourceID.luoxue.displayName,
-                        url: resolved.url,
-                        headers: Self.mergedPlaybackHeaders(scriptHeaders: resolved.headers))
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    Self.log.error("source=\(entry.name, privacy: .public) quality=\(quality, privacy: .public) resolve failed: \(error.localizedDescription, privacy: .public)")
-                    sourceFailures.append("\(quality)：\(error.localizedDescription)")
-                    continue
-                }
-            }
-            if let first = sourceFailures.first {
-                failures.append("\(entry.name)：\(first)")
-            }
+        if engineDirty || engine == nil || !isReady {
+            await reloadEngine()
         }
-        throw AggregateResolveError(failures: failures)
+        guard let engine else {
+            throw AggregateResolveError(failures: [])
+        }
+        let candidates = Self.lxQualityCandidates(
+            for: SettingsManager.shared.audioQuality,
+            supported: engineCapabilities["wy"])
+        do {
+            let resolved = try await engine.resolve(
+                source: "wy",
+                musicInfo: Self.musicInfoPayload(for: track),
+                qualities: candidates)
+            if resolved.fromRequestCapture {
+                Self.log.warning("all handlers failed; using captured request URL")
+            }
+            return ResolvedAudioSource(
+                id: .luoxue,
+                displayName: AudioSourceID.luoxue.displayName,
+                url: resolved.url,
+                headers: Self.mergedPlaybackHeaders(scriptHeaders: resolved.headers))
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            Self.log.error("resolve failed: \(error.localizedDescription, privacy: .public)")
+            throw AggregateResolveError(failures: [error.localizedDescription])
+        }
     }
 
     // MARK: - Quality mapping

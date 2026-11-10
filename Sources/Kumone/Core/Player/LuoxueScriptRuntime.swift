@@ -1,9 +1,7 @@
 import Foundation
 import JavaScriptCore
-import CryptoKit
-import CommonCrypto
-import Security
-import os
+import Compression
+import os.log
 
 // MARK: - Error
 
@@ -31,60 +29,86 @@ enum LuoxueScriptError: LocalizedError {
     }
 }
 
+// MARK: - Resolved stream
+
 /// A resolved stream: the URL plus any headers the server insists on.
 /// 网盘 sources often answer with `{ url, headers }` — the link only plays
 /// when those headers (User-Agent / Referer / Cookie) ride along.
 struct LuoxueResolvedMusic: Sendable {
     let url: URL
     let headers: [String: String]
+    /// True when the URL did not come from the handler's return value but
+    /// from the last link the script requested via `lx.request` — the
+    /// lastRequestResolvedMusicURL fallback of the reference app.
+    var fromRequestCapture: Bool = false
+}
+
+// MARK: - Engine input / output
+
+/// One script handed to the engine for loading.
+struct LxScriptInput {
+    /// Caller-side identity (the installed-source UUID).
+    let id: UUID
+    /// Display name, used in logs.
+    let name: String
+    /// `@name/@description/@version/@author` header metadata.
+    let meta: [String: String]
+    /// The script body.
+    let script: String
+}
+
+/// Load outcome of one script inside the shared context.
+struct LxScriptResult {
+    /// Source ids this script registered (`wy`, `tx`, …).
+    var sources: [String] = []
+    /// Non-nil when the script threw or reported `status: false`.
+    var error: String?
+}
+
+/// Everything a `load` call reports back.
+struct LxLoadResult {
+    /// Merged `sourceId -> qualitys` across every loaded script.
+    let capabilities: [String: [String]]
+    /// Per-script outcome, keyed by the input's `id`.
+    let scriptResults: [UUID: LxScriptResult]
 }
 
 // MARK: - JSExport bridges
 
-/// Native surface the Luoxue (LX Music) user script talks to. Every method is
-/// invoked by JavaScriptCore on the runtime's serial queue.
-@objc protocol LuoxueBridgeExports: JSExport {
-    // Console sink behind the shim's `console.log/warn/error/...`.
+/// Native surface the LX Music user script talks to. Every method is invoked
+/// by JavaScriptCore on the engine's serial queue.
+@objc protocol LxBridgeExports: JSExport {
     func consoleLog(_ message: JSValue)
-    // HTTP request primitive behind `lx.request(url, options, callback)`.
     func httpRequest(_ url: JSValue, _ options: JSValue, _ callback: JSValue)
-    // Lifecycle events sent by the script via `lx.send(EVENT_NAMES.inited, ...)`.
-    func scriptInited(_ payload: JSValue)
-    func scriptUpdateAlert(_ payload: JSValue)
-    // Buffers.
+    func scriptEvent(_ name: JSValue, _ payload: JSValue)
     func bufferFrom(_ text: JSValue, _ type: JSValue) -> JSValue
     func bufferToString(_ buffer: JSValue, _ type: JSValue) -> JSValue
-    // Crypto helpers mirroring the LX Music `utils.crypto` surface.
-    func md5(_ text: JSValue) -> JSValue
-    func randomBytes(_ size: JSValue) -> JSValue
-    func aesEncrypt(_ data: JSValue, _ mode: JSValue, _ key: JSValue, _ iv: JSValue) -> JSValue
-    func aesDecrypt(_ data: JSValue, _ mode: JSValue, _ key: JSValue, _ iv: JSValue) -> JSValue
-    func rsaEncrypt(_ data: JSValue, _ key: JSValue) -> JSValue
-    func rsaDecrypt(_ data: JSValue, _ key: JSValue) -> JSValue
+    func zlibInflate(_ buffer: JSValue) -> JSValue
+    func zlibDeflate(_ buffer: JSValue) -> JSValue
 }
 
 /// Promise settlement callbacks handed to the script's handler result.
-@objc protocol LuoxuePromiseExports: JSExport {
+@objc protocol LxPromiseExports: JSExport {
     func resolve(_ value: JSValue)
     func reject(_ error: JSValue)
 }
 
 /// Wraps a `JSValue` so it can be captured by `@Sendable` closures; the value
-/// itself is only ever touched on the runtime queue.
+/// itself is only ever touched on the engine queue.
 final class LuoxueJSValueBox: @unchecked Sendable {
     let value: JSValue
     init(_ value: JSValue) { self.value = value }
 }
 
-final class LuoxueNativeBridge: NSObject, LuoxueBridgeExports {
-    private weak var runtime: LuoxueScriptRuntime?
+// MARK: - Native bridge
 
-    init(runtime: LuoxueScriptRuntime) {
-        self.runtime = runtime
+final class LxNativeBridge: NSObject, LxBridgeExports {
+    private weak var engine: LxScriptEngine?
+
+    init(engine: LxScriptEngine) {
+        self.engine = engine
         super.init()
     }
-
-    // MARK: Console
 
     private static let consoleLog = Logger(subsystem: "sb.moe.kumone", category: "lx-console")
 
@@ -96,17 +120,17 @@ final class LuoxueNativeBridge: NSObject, LuoxueBridgeExports {
     // MARK: HTTP
 
     func httpRequest(_ url: JSValue, _ options: JSValue, _ callback: JSValue) {
-        guard let runtime = runtime else { return }
-        let request = runtime.makeRequest(urlValue: url, optionsValue: options)
+        guard let engine else { return }
+        let request = engine.makeRequest(urlValue: url, optionsValue: options)
         let callbackBox = LuoxueJSValueBox(callback)
         guard let request else {
-            runtime.runOnQueue { [weak self] in
+            engine.runOnQueue { [weak self] in
                 self?.invokeCallback(callbackBox, error: "invalid request")
             }
             return
         }
-        runtime.performRequest(request) { [weak runtime] result in
-            runtime?.runOnQueue { [weak self] in
+        engine.performRequest(request) { [weak engine] result in
+            engine?.runOnQueue { [weak self] in
                 switch result {
                 case .success(let response):
                     self?.invokeCallback(callbackBox, response: response)
@@ -118,7 +142,7 @@ final class LuoxueNativeBridge: NSObject, LuoxueBridgeExports {
     }
 
     private func invokeCallback(_ box: LuoxueJSValueBox, response: [String: Any]? = nil, error: String? = nil) {
-        guard let runtime = runtime, let context = runtime.contextOnQueue else { return }
+        guard let engine, let context = engine.contextOnQueue else { return }
         let arguments: [Any]
         if let error {
             let errorObject = JSValue(object: ["message": error, "code": -1], in: context)
@@ -134,136 +158,98 @@ final class LuoxueNativeBridge: NSObject, LuoxueBridgeExports {
 
     // MARK: Lifecycle
 
-    func scriptInited(_ payload: JSValue) {
-        runtime?.handleScriptInited(payload)
-    }
-
-    func scriptUpdateAlert(_ payload: JSValue) {
-        // Update notices from the script are informational only.
+    func scriptEvent(_ name: JSValue, _ payload: JSValue) {
+        engine?.handleScriptEvent(name.toString() ?? "", payload: payload)
     }
 
     // MARK: Buffers
 
     func bufferFrom(_ text: JSValue, _ type: JSValue) -> JSValue {
-        guard let runtime = runtime, let context = runtime.contextOnQueue else {
+        guard let engine, let context = engine.contextOnQueue else {
             return JSValue(undefinedIn: JSContext())
         }
         let string = text.isString ? (text.toString() ?? "") : ""
         let typeString = type.isString ? (type.toString() ?? "utf8") : "utf8"
-        let bytes = LuoxueCrypto.bytes(fromString: string, encoding: typeString)
+        let bytes = LxBuffer.bytes(fromString: string, encoding: typeString)
         return JSValue(object: bytes, in: context) ?? JSValue(nullIn: context)
     }
 
     func bufferToString(_ buffer: JSValue, _ type: JSValue) -> JSValue {
-        guard let runtime = runtime, let context = runtime.contextOnQueue else {
+        guard let engine, let context = engine.contextOnQueue else {
             return JSValue(undefinedIn: JSContext())
         }
-        let bytes = runtime.bytes(from: buffer)
+        let bytes = LxBuffer.bytes(from: buffer)
         let typeString = type.isString ? (type.toString() ?? "utf8") : "utf8"
-        let string = LuoxueCrypto.string(fromBytes: bytes, encoding: typeString)
+        let string = LxBuffer.string(fromBytes: bytes, encoding: typeString)
         return JSValue(object: string, in: context) ?? JSValue(nullIn: context)
     }
 
-    // MARK: Crypto
+    // MARK: zlib
 
-    func md5(_ text: JSValue) -> JSValue {
-        guard let runtime = runtime, let context = runtime.contextOnQueue else {
+    func zlibInflate(_ buffer: JSValue) -> JSValue {
+        guard let engine, let context = engine.contextOnQueue else {
             return JSValue(undefinedIn: JSContext())
         }
-        let digest = LuoxueCrypto.md5Hex(text.isString ? (text.toString() ?? "") : "")
-        return JSValue(object: digest, in: context) ?? JSValue(nullIn: context)
+        let bytes = LxBuffer.bytes(from: buffer)
+        return JSValue(object: LxZlib.inflate(bytes), in: context) ?? JSValue(nullIn: context)
     }
 
-    func randomBytes(_ size: JSValue) -> JSValue {
-        guard let runtime = runtime, let context = runtime.contextOnQueue else {
+    func zlibDeflate(_ buffer: JSValue) -> JSValue {
+        guard let engine, let context = engine.contextOnQueue else {
             return JSValue(undefinedIn: JSContext())
         }
-        let count = size.isNumber ? Int(size.toInt32()) : 0
-        return JSValue(object: LuoxueCrypto.randomBytes(count), in: context) ?? JSValue(nullIn: context)
-    }
-
-    func aesEncrypt(_ data: JSValue, _ mode: JSValue, _ key: JSValue, _ iv: JSValue) -> JSValue {
-        guard let runtime = runtime, let context = runtime.contextOnQueue else {
-            return JSValue(undefinedIn: JSContext())
-        }
-        let modeString = mode.isString ? (mode.toString() ?? "") : ""
-        let output = LuoxueCrypto.aesCrypt(
-            operation: CCOperation(kCCEncrypt),
-            data: runtime.bytes(from: data),
-            mode: modeString,
-            key: runtime.bytes(from: key),
-            iv: runtime.bytes(from: iv)
-        )
-        return JSValue(object: output, in: context) ?? JSValue(nullIn: context)
-    }
-
-    func aesDecrypt(_ data: JSValue, _ mode: JSValue, _ key: JSValue, _ iv: JSValue) -> JSValue {
-        guard let runtime = runtime, let context = runtime.contextOnQueue else {
-            return JSValue(undefinedIn: JSContext())
-        }
-        let modeString = mode.isString ? (mode.toString() ?? "") : ""
-        let output = LuoxueCrypto.aesCrypt(
-            operation: CCOperation(kCCDecrypt),
-            data: runtime.bytes(from: data),
-            mode: modeString,
-            key: runtime.bytes(from: key),
-            iv: runtime.bytes(from: iv)
-        )
-        return JSValue(object: output, in: context) ?? JSValue(nullIn: context)
-    }
-
-    func rsaEncrypt(_ data: JSValue, _ key: JSValue) -> JSValue {
-        guard let runtime = runtime, let context = runtime.contextOnQueue else {
-            return JSValue(undefinedIn: JSContext())
-        }
-        let pem = key.isString ? (key.toString() ?? "") : ""
-        let output = LuoxueCrypto.rsaCrypt(
-            operation: CCOperation(kCCEncrypt),
-            data: runtime.bytes(from: data),
-            pem: pem
-        )
-        return JSValue(object: output, in: context) ?? JSValue(nullIn: context)
-    }
-
-    func rsaDecrypt(_ data: JSValue, _ key: JSValue) -> JSValue {
-        guard let runtime = runtime, let context = runtime.contextOnQueue else {
-            return JSValue(undefinedIn: JSContext())
-        }
-        let pem = key.isString ? (key.toString() ?? "") : ""
-        let output = LuoxueCrypto.rsaCrypt(
-            operation: CCOperation(kCCDecrypt),
-            data: runtime.bytes(from: data),
-            pem: pem
-        )
-        return JSValue(object: output, in: context) ?? JSValue(nullIn: context)
+        let bytes = LxBuffer.bytes(from: buffer)
+        return JSValue(object: LxZlib.deflate(bytes), in: context) ?? JSValue(nullIn: context)
     }
 }
 
-// MARK: - Runtime
+// MARK: - Engine
 
-/// Runs a Luoxue (LX Music) custom source user script in a JavaScriptCore
-/// context and bridges its `musicUrl` action to Swift.
+/// The LX Music custom-source engine, modeled one-to-one on the reference
+/// app's (畅怡守/KMusic) implementation:
+///
+/// - every enabled script is evaluated into ONE shared `JSContext`, in list
+///   order, each preceded by its own `lx.currentScriptInfo`;
+/// - `lx.on(EVENT_NAMES.request, handler)` collects handlers into a list —
+///   resolution walks handlers in order, and qualities within each handler
+///   (`resolveMusicUrlWithFallback` + `retryWithLowerQualityIfPossible`);
+/// - `lx.request` is wrapped so JSON-looking bodies become hybrid String
+///   objects (`.json`/`.text`/`.data`/`.raw`), and every request captures the
+///   URL (plus any URL found in the body) as the
+///   `lastRequestResolvedMusicURL` fallback used when no handler produced a
+///   link;
+/// - `lx.utils` provides `buffer` and `zlib` (`_inflateSync`/`_deflateSync`
+///   native, plus Promise wrappers), there is no `crypto` — matching the
+///   reference app exactly;
+/// - `atob`/`btoa`, `console` (with `group`/`groupEnd`), `window`,
+///   `globalThis.cerumusic` (Promise request wrapper + `NoticeCenter` no-op)
+///   and the CommonJS adapter (`module.exports.musicUrl` + `.sources`) are
+///   all provided.
 ///
 /// Thread model: the `JSContext` (and every `JSValue` derived from it) is
 /// confined to `queue`. Public methods are async and hop onto that queue,
 /// never passing `JSValue` across the boundary — only plain Sendable values.
-final class LuoxueScriptRuntime {
-    struct Capability {
-        let name: String
-        let actions: [String]
-        let qualitys: [String]
-    }
+final class LxScriptEngine {
+    private static let log = Logger(subsystem: "sb.moe.kumone", category: "lx-engine")
 
-    private let queue = DispatchQueue(label: "sb.moe.kun.luoxue", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "sb.moe.kun.lx-engine", qos: .userInitiated)
     private let session: URLSession
     private var context: JSContext?
-    private var bridge: LuoxueNativeBridge?
-    private var capabilities: [String: Capability] = [:]
-    private var initErrorMessage: String?
-    private var scriptFailedMessage: String?
-
-    /// Set when `scriptInited` arrives; observed on the runtime queue.
-    var onInited: (() -> Void)?
+    private var bridge: LxNativeBridge?
+    /// sourceId -> qualitys, merged across scripts.
+    private var capabilities: [String: [String]] = [:]
+    /// Per-input-script outcome, keyed by the input's UUID.
+    private var scriptResults: [UUID: LxScriptResult] = [:]
+    /// Index of the script currently being evaluated, for error attribution.
+    private var currentScriptID: UUID?
+    /// The last URL candidate seen by `lx.request` — request URL itself or a
+    /// URL extracted from a response body. Used as the final fallback.
+    private var lastCapturedURL: String?
+    /// Scripts still waiting on their `inited` event during a `load` call.
+    private var pendingScriptIDs: Set<UUID> = []
+    /// Set while a `load` is waiting for scripts to initialize; fires (once)
+    /// when every script has reported or the grace period runs out.
+    private var loadFinisher: (() -> Void)?
 
     init() {
         let configuration = URLSessionConfiguration.ephemeral
@@ -272,8 +258,8 @@ final class LuoxueScriptRuntime {
         configuration.httpCookieAcceptPolicy = .never
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 15
-        configuration.timeoutIntervalForResource = 20
-        session = URLSession(configuration: configuration)
+        configuration.timeoutIntervalForResource = 30
+        session = URLSession(configuration: configuration, delegate: RedirectLimitDelegate.shared, delegateQueue: nil)
     }
 
     // Only meaningful when called on `queue`.
@@ -283,29 +269,53 @@ final class LuoxueScriptRuntime {
         queue.async(execute: work)
     }
 
-    // MARK: Loading
+    /// Redirect counting for `follow_max` (see `makeRequest`).
+    private final class RedirectLimitDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        static let shared = RedirectLimitDelegate()
+        private let lock = NSLock()
+        private var remaining: [Int: Int] = [:]
 
-    /// One `@field value` entry from a script's leading comment header.
-    private static func scriptHeaderField(_ field: String, in script: String) -> String? {
-        guard let regex = try? NSRegularExpression(pattern: "@\(field)\\s+([^\\r\\n*]+)"),
-              let match = regex.firstMatch(in: script, range: NSRange(script.startIndex..., in: script)),
-              let range = Range(match.range(at: 1), in: script) else { return nil }
-        let value = script[range].trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
+        func setRemaining(_ value: Int?, forTaskIdentifier id: Int) {
+            lock.withLock {
+                if let value { remaining[id] = value } else { remaining.removeValue(forKey: id) }
+            }
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            task: URLSessionTask,
+            willPerformHTTPRedirection response: HTTPURLResponse,
+            newRequest request: URLRequest,
+            completionHandler: @escaping (URLRequest?) -> Void
+        ) {
+            let id = task.taskIdentifier
+            let allowed: Bool = lock.withLock {
+                guard let left = remaining[id] else { return true }
+                if left <= 0 { return false }
+                remaining[id] = left - 1
+                return true
+            }
+            completionHandler(allowed ? request : nil)
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            setRemaining(nil, forTaskIdentifier: task.taskIdentifier)
+        }
     }
 
-    /// Evaluates the script and waits (briefly) for its `inited` event.
-    func load(script: String, env: String, version: String) async throws -> [String: Capability] {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[String: Capability], Error>) in
+    // MARK: Loading
+
+    /// Evaluates every script into a fresh shared context and waits (up to
+    /// `initTimeout`) for their `inited` events.
+    func load(scripts: [LxScriptInput], env: String, version: String, initTimeout: TimeInterval = 10) async throws -> LxLoadResult {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<LxLoadResult, Error>) in
             var resumed = false
 
-            func finish(_ result: Result<[String: Capability], Error>) {
+            func finish(_ result: Result<LxLoadResult, Error>) {
                 guard !resumed else { return }
                 resumed = true
                 continuation.resume(with: result)
             }
-
-            onInited = nil
 
             queue.async { [weak self] in
                 guard let self else {
@@ -314,8 +324,8 @@ final class LuoxueScriptRuntime {
                 }
 
                 self.capabilities = [:]
-                self.initErrorMessage = nil
-                self.scriptFailedMessage = nil
+                self.scriptResults = [:]
+                self.lastCapturedURL = nil
 
                 let context = JSContext()
                 guard let context else {
@@ -324,155 +334,248 @@ final class LuoxueScriptRuntime {
                 }
                 context.exceptionHandler = { [weak self] _, exception in
                     let message = exception?.description ?? "unknown script exception"
-                    self?.scriptFailedMessage = message
+                    self?.recordScriptError(message)
                 }
                 self.context = context
 
-                let bridge = LuoxueNativeBridge(runtime: self)
+                let bridge = LxNativeBridge(engine: self)
                 self.bridge = bridge
                 context.setObject(bridge, forKeyedSubscript: "__lxBridge" as NSString)
                 context.setObject(env, forKeyedSubscript: "__lxEnv" as NSString)
                 context.setObject(version, forKeyedSubscript: "__lxVersion" as NSString)
-                // `lx.currentScriptInfo` — some scripts read their own header
-                // metadata (e.g. for integrity checks) at init time.
-                context.setObject(Self.scriptHeaderField("name", in: script) ?? "", forKeyedSubscript: "__lxScriptName" as NSString)
-                context.setObject(Self.scriptHeaderField("description", in: script) ?? "", forKeyedSubscript: "__lxScriptDescription" as NSString)
-                context.setObject(Self.scriptHeaderField("version", in: script) ?? "", forKeyedSubscript: "__lxScriptVersion" as NSString)
-                context.setObject(Self.scriptHeaderField("author", in: script) ?? "", forKeyedSubscript: "__lxScriptAuthor" as NSString)
 
-                context.evaluateScript(Self.shimSource)
+                context.evaluateScript(Self.hostSource)
+                context.evaluateScript(Self.zlibPromiseSource)
 
-                // User script: evaluate and surface any thrown exception.
-                context.evaluateScript(script)
-                if let failure = self.scriptFailedMessage {
-                    self.context = nil
-                    self.bridge = nil
-                    finish(.failure(LuoxueScriptError.scriptThrew(failure)))
-                    return
-                }
-                // CommonJS-style plugins are adapted onto the LX protocol
-                // after the script body ran and had a chance to fill
-                // module.exports.
-                context.evaluateScript(Self.commonJSAdapterSource)
+                // Scripts that have not reported `inited` yet; when the set
+                // empties, loading is done without waiting out the grace
+                // period.
+                self.pendingScriptIDs = Set(scripts.map(\.id))
 
-                // Give asynchronously-initializing scripts a grace period
-                // before declaring the script dead. Many sources run a
-                // network version check in their init before reporting
-                // `inited`; on real-world networks that regularly takes more
-                // than a couple of seconds, so the deadline is generous.
-                self.queue.asyncAfter(deadline: .now() + 10.0) { [weak self] in
-                    guard let self else { return }
-                    let inited = !self.capabilities.isEmpty
-                    let failure = self.initErrorMessage
-                    self.context = nil
-                    self.bridge = nil
-                    self.onInited = nil
-                    if inited {
-                        finish(.success(self.capabilities))
-                    } else if let failure {
-                        finish(.failure(LuoxueScriptError.scriptInitFailed(failure)))
-                    } else {
-                        finish(.failure(LuoxueScriptError.scriptInitFailed("script never reported initialization")))
+                Self.log.info("loadScripts called. count=\(scripts.count, privacy: .public)")
+                for input in scripts {
+                    Self.log.info("loading script meta. name=\(input.name, privacy: .public)")
+                    self.currentScriptID = input.id
+                    self.scriptResults[input.id] = LxScriptResult()
+
+                    // Per-script identity, exactly like the reference app:
+                    // globalThis.lx.currentScriptInfo = {…}
+                    let info: [String: Any] = [
+                        "name": input.meta["name"] ?? input.name,
+                        "description": input.meta["description"] ?? "",
+                        "version": input.meta["version"] ?? "",
+                        "author": input.meta["author"] ?? "",
+                    ]
+                    if let data = try? JSONSerialization.data(withJSONObject: info),
+                       let json = String(data: data, encoding: .utf8),
+                       let value = JSValue(object: json, in: context) {
+                        context.evaluateScript("globalThis.lx.currentScriptInfo = \(value.toString() ?? "{}")")
                     }
+
+                    // CommonJS scripts expect `module`/`exports` to exist.
+                    context.evaluateScript(Self.modulePreludeSource)
+                    context.evaluateScript(input.script)
+                    // A script that threw is recorded, but the next one still
+                    // loads — one bad file never kills the engine.
+                    context.evaluateScript(Self.commonJSAdapterSource)
+                }
+                self.currentScriptID = nil
+                // Host-level shims are idempotent; apply them once after the
+                // scripts so per-script pieces cannot re-wrap them.
+                context.evaluateScript(Self.hybridBodyWrapperSource)
+                context.evaluateScript(Self.cerumusicCompatSource)
+
+                func finishLoading() {
+                    for id in self.pendingScriptIDs {
+                        self.scriptResults[id]?.error = "script never reported initialization"
+                    }
+                    let capabilities = self.capabilities
+                    let results = self.scriptResults
+                    let handlerCount = self.requestHandlerCountOnQueue()
+                    Self.log.info("loadScripts finished. requestHandlers=\(handlerCount, privacy: .public), registeredSources=\(capabilities.keys.sorted().joined(separator: ","), privacy: .public)")
+                    finish(.success(LxLoadResult(capabilities: capabilities, scriptResults: results)))
+                }
+
+                // As soon as every script has reported `inited`, loading is
+                // complete — no need to sit out the whole grace period.
+                self.loadFinisher = finishLoading
+                if self.pendingScriptIDs.isEmpty { finishLoading() }
+
+                // Grace period for scripts that finish initializing over the
+                // network before reporting `inited`.
+                self.queue.asyncAfter(deadline: .now() + initTimeout) { [weak self] in
+                    guard let self else { return }
+                    let finisher = self.loadFinisher
+                    self.loadFinisher = nil
+                    finisher?()
                 }
             }
         }
     }
 
-    /// Called (on the queue) when the script sends `EVENT_NAMES.inited`.
-    func handleScriptInited(_ payload: JSValue) {
+    private func recordScriptError(_ message: String) {
+        guard let id = currentScriptID else { return }
+        if scriptResults[id]?.error == nil {
+            scriptResults[id]?.error = message
+        }
+    }
+
+    /// Fires the pending `load` completion once no script is still waiting on
+    /// its `inited` event.
+    private func maybeFinishLoading() {
+        guard pendingScriptIDs.isEmpty else { return }
+        let finisher = loadFinisher
+        loadFinisher = nil
+        finisher?()
+    }
+
+    /// `send(EVENT_NAMES.inited, { status, sources })` and friends.
+    private func handleScriptEvent(_ name: String, payload: JSValue) {
         guard let object = payload.toObject() as? [String: Any] else { return }
-        if let status = object["status"] as? Bool, !status {
-            initErrorMessage = "script reported status: false"
-            onInited?()
-            return
+        switch name {
+        case "inited":
+            if let status = object["status"] as? Bool, !status {
+                recordScriptError("script reported status: false")
+                pendingScriptIDs.remove(currentScriptID ?? UUID())
+                maybeFinishLoading()
+                return
+            }
+            // A script without `sources` has still finished initializing.
+            if currentScriptID != nil {
+                pendingScriptIDs.remove(currentScriptID!)
+                maybeFinishLoading()
+            }
+            guard let sources = object["sources"] as? [String: Any] else { return }
+            var registered: [String] = []
+            for (key, raw) in sources {
+                guard let info = raw as? [String: Any] else { continue }
+                let qualitys = info["qualitys"] as? [String] ?? []
+                capabilities[key] = qualitys
+                registered.append(key)
+            }
+            if let id = currentScriptID {
+                scriptResults[id]?.sources = registered.sorted()
+            }
+        case "updateAlert", "showConfigView":
+            // Informational in this app, like the reference.
+            break
+        default:
+            break
         }
-        guard let sources = object["sources"] as? [String: Any] else {
-            initErrorMessage = "inited payload has no sources"
-            onInited?()
-            return
-        }
-        var parsed: [String: Capability] = [:]
-        for (key, raw) in sources {
-            guard let info = raw as? [String: Any] else { continue }
-            let name = info["name"] as? String ?? key
-            let actions = info["actions"] as? [String] ?? []
-            let qualitys = info["qualitys"] as? [String] ?? []
-            parsed[key] = Capability(name: name, actions: actions, qualitys: qualitys)
-        }
-        capabilities = parsed
-        onInited?()
     }
 
     // MARK: Resolving
 
-    func capabilities() async -> [String: Capability] {
-        await withCheckedContinuation { (continuation: CheckedContinuation<[String: Capability], Never>) in
-            queue.async { [weak self] in
-                continuation.resume(returning: self?.capabilities ?? [:])
-            }
-        }
+    /// Number of registered request handlers (queue-confined read).
+    private func requestHandlerCountOnQueue() -> Int {
+        guard let context,
+              let lx = context.objectForKeyedSubscript("lx"),
+              let count = lx.invokeMethod("__handlerCount", withArguments: []),
+              count.isNumber else { return 0 }
+        return Int(count.toInt32())
     }
 
-    func resolveMusicURL(source: String, songID: Int, quality: String, timeout: TimeInterval = 20) async throws -> LuoxueResolvedMusic {
+    /// Walks every registered handler (in registration order) and every
+    /// quality candidate (best first) until one produces a URL. When none
+    /// does, the last URL captured from `lx.request` is the fallback — the
+    /// reference app's `lastRequestResolvedMusicURL`.
+    func resolve(
+        source: String,
+        musicInfo: [String: Any],
+        qualities: [String],
+        timeout: TimeInterval = 20
+    ) async throws -> LuoxueResolvedMusic {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<LuoxueResolvedMusic, Error>) in
             queue.async { [weak self] in
                 guard let self, let context = self.context else {
                     continuation.resume(throwing: LuoxueScriptError.notLoaded)
                     return
                 }
-
                 let lx = context.objectForKeyedSubscript("lx")
                 guard let lx, !lx.isUndefined, !lx.isNull else {
                     continuation.resume(throwing: LuoxueScriptError.notLoaded)
                     return
                 }
-
-                let payload: [String: Any] = [
-                    "source": source,
-                    "action": "musicUrl",
-                    "info": [
-                        "type": quality,
-                        // LX Music scripts read the id from `songmid`, `id` or
-                        // `mid` — a lone `songId` key is invisible to them and
-                        // every request failed with "缺少歌曲ID".
-                        "musicInfo": [
-                            "songmid": String(songID),
-                            "id": String(songID),
-                            "songId": songID,
-                            "source": source,
-                        ],
-                    ],
-                ]
-                guard let payloadValue = JSValue(object: payload, in: context) else {
+                let handlerCount = self.requestHandlerCountOnQueue()
+                guard handlerCount > 0 else {
                     continuation.resume(throwing: LuoxueScriptError.noRequestHandler)
                     return
                 }
-                let promise = lx.invokeMethod("__invokeRequest", withArguments: [payloadValue])
-                guard let promise, !promise.isUndefined, !promise.isNull else {
-                    continuation.resume(throwing: LuoxueScriptError.noRequestHandler)
-                    return
-                }
+                // A fresh resolve starts with a clean capture slate.
+                self.lastCapturedURL = nil
 
                 let settled = LuoxueSettlementBox()
                 settled.finish = { result in
-                    // Always invoked on the runtime queue.
                     continuation.resume(with: result)
                 }
-                let callbacks = LuoxuePromiseCallbacks()
-                callbacks.onResolve = { value in
-                    settled.succeed(value)
-                }
-                callbacks.onReject = { value in
-                    settled.fail(LuoxueScriptError.scriptThrew(LuoxueSettlementBox.errorMessage(from: value)))
-                }
-                guard let callbacksValue = JSValue(object: callbacks, in: context) else {
-                    continuation.resume(throwing: LuoxueScriptError.noRequestHandler)
-                    return
-                }
-                lx.invokeMethod("__then", withArguments: [promise, callbacksValue])
 
-                queue.asyncAfter(deadline: .now() + timeout) { [weak settled] in
+                func attemptNext(handlerIndex: Int, qualityIndex: Int) {
+                    guard handlerIndex < handlerCount else {
+                        // Every handler failed: the last link the script
+                        // fetched is the reference app's final answer.
+                        if let captured = self.lastCapturedURL,
+                           let url = Self.makeURL(from: captured) {
+                            Self.log.info("resolve fallback to captured request url: \(captured.prefix(120), privacy: .public)")
+                            settled.succeedURL(captured, url)
+                        } else {
+                            settled.fail(LuoxueScriptError.noMusicURL)
+                        }
+                        return
+                    }
+                    let quality: String
+                    if qualityIndex < qualities.count {
+                        quality = qualities[qualityIndex]
+                    } else if let first = qualities.first {
+                        quality = first
+                    } else {
+                        quality = "128k"
+                    }
+
+                    let payload: [String: Any] = [
+                        "action": "musicUrl",
+                        "source": source,
+                        "info": [
+                            "type": quality,
+                            "musicInfo": musicInfo,
+                        ],
+                    ]
+                    guard let payloadValue = JSValue(object: payload, in: context) else {
+                        settled.fail(LuoxueScriptError.noRequestHandler)
+                        return
+                    }
+                    let promise = lx.invokeMethod("__invokeAt", withArguments: [handlerIndex, payloadValue])
+                    guard let promise, !promise.isUndefined, !promise.isNull else {
+                        // This handler slot is gone; move to the next handler.
+                        attemptNext(handlerIndex: handlerIndex + 1, qualityIndex: 0)
+                        return
+                    }
+
+                    let callbacks = LuoxuePromiseCallbacks()
+                    callbacks.onResolve = { value in
+                        settled.succeed(value)
+                    }
+                    callbacks.onReject = { value in
+                        let message = LuoxueSettlementBox.errorMessage(from: value)
+                        Self.log.error("resolveMusicUrl failed. source=\(source, privacy: .public) handler=\(handlerIndex, privacy: .public) quality=\(quality, privacy: .public) error=\(message, privacy: .public)")
+                        // Lower quality first, then the next handler — the
+                        // reference app's retryWithLowerQualityIfPossible
+                        // followed by "retry with next JS handler".
+                        if qualityIndex + 1 < qualities.count {
+                            attemptNext(handlerIndex: handlerIndex, qualityIndex: qualityIndex + 1)
+                        } else {
+                            attemptNext(handlerIndex: handlerIndex + 1, qualityIndex: 0)
+                        }
+                    }
+                    guard let callbacksValue = JSValue(object: callbacks, in: context) else {
+                        settled.fail(LuoxueScriptError.noRequestHandler)
+                        return
+                    }
+                    lx.invokeMethod("__then", withArguments: [promise, callbacksValue])
+                }
+
+                attemptNext(handlerIndex: 0, qualityIndex: 0)
+
+                self.queue.asyncAfter(deadline: .now() + timeout) { [weak settled] in
                     settled?.fail(LuoxueScriptError.timedOut)
                 }
             }
@@ -481,20 +584,12 @@ final class LuoxueScriptRuntime {
 
     // MARK: Request helpers (queue-confined)
 
-    func bytes(from value: JSValue) -> [UInt8] {
-        if value.isArray {
-            let array = value.toArray() as? [Any] ?? []
-            return array.compactMap { ($0 as? NSNumber)?.uint8Value }
-        }
-        if value.isString {
-            return Array((value.toString() ?? "").utf8)
-        }
-        return []
-    }
-
     func makeRequest(urlValue: JSValue, optionsValue: JSValue) -> URLRequest? {
         guard let urlString = urlValue.isString ? (urlValue.toString() ?? nil) : nil,
-              let url = URL(string: urlString) else { return nil }
+              let url = Self.makeURL(from: urlString) else {
+            Self.log.error("lx.request invalid URL: \(urlValue.toString() ?? "", privacy: .public)")
+            return nil
+        }
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
         // Present as the official LX Music mobile client: many source APIs
@@ -507,6 +602,7 @@ final class LuoxueScriptRuntime {
                 forHTTPHeaderField: "User-Agent")
         }
 
+        var followMax = 5
         if optionsValue.isObject, let options = optionsValue.toObject() as? [String: Any] {
             if let method = options["method"] as? String, !method.isEmpty {
                 request.httpMethod = method.uppercased()
@@ -529,23 +625,40 @@ final class LuoxueScriptRuntime {
                     }
                 }
             }
+            if let follow = options["follow_max"] as? Int, follow >= 0 {
+                followMax = follow
+            }
         }
+        request.setValue("\(followMax)", forHTTPHeaderField: "X-Lx-Follow-Max")
         return request
     }
 
-    /// Failure payload for `performRequest` (plain `String` is not an `Error`).
-    struct LuoxueHTTPError: Error {
+    struct LxHTTPError: Error {
         let message: String
     }
 
-    func performRequest(_ request: URLRequest, completion: @escaping (Result<[String: Any], LuoxueHTTPError>) -> Void) {
-        let task = session.dataTask(with: request) { data, response, error in
+    func performRequest(_ request: URLRequest, completion: @escaping (Result<[String: Any], LxHTTPError>) -> Void) {
+        // `follow_max` rides on a private header; the delegate counts down.
+        var request = request
+        let followMax = Int(request.value(forHTTPHeaderField: "X-Lx-Follow-Max") ?? "") ?? 5
+        request.setValue(nil, forHTTPHeaderField: "X-Lx-Follow-Max")
+
+        // The request URL itself is a capture candidate.
+        if let urlString = request.url?.absoluteString {
+            lastCapturedURL = urlString
+        }
+
+        let task = session.dataTask(with: request) { [weak self] data, response, error in
             if let error {
-                completion(.failure(LuoxueHTTPError(message: error.localizedDescription)))
+                self?.queue.async {
+                    completion(.failure(LxHTTPError(message: error.localizedDescription)))
+                }
                 return
             }
             guard let httpResponse = response as? HTTPURLResponse else {
-                completion(.failure(LuoxueHTTPError(message: "non-http response")))
+                self?.queue.async {
+                    completion(.failure(LxHTTPError(message: "non-http response")))
+                }
                 return
             }
             var headers: [String: String] = [:]
@@ -553,30 +666,68 @@ final class LuoxueScriptRuntime {
                 headers[String(describing: name).lowercased()] = String(describing: value)
             }
 
-            // Body is always the raw string: the JS shim wraps it into a
-            // hybrid String that also exposes the parsed JSON (.json/.text),
-            // which is what LX scripts expect either way.
             let body: Any = (data.flatMap { String(data: $0, encoding: .utf8) }) ?? ""
-            completion(.success([
-                "statusCode": httpResponse.statusCode,
-                "headers": headers,
-                "body": body,
-            ]))
+            Self.log.info("lx.request <- status \(httpResponse.statusCode, privacy: .public)")
+
+            self?.queue.async {
+                // Any http(s) link inside the body is a capture candidate too
+                // ("captured url candidate (from body)") — recorded on the
+                // engine queue alongside every other capture.
+                if let text = body as? String, let candidate = Self.firstURL(in: text) {
+                    self?.lastCapturedURL = candidate
+                }
+                completion(.success([
+                    "statusCode": httpResponse.statusCode,
+                    "headers": headers,
+                    "body": body,
+                ]))
+            }
         }
+        RedirectLimitDelegate.shared.setRemaining(followMax, forTaskIdentifier: task.taskIdentifier)
         task.resume()
+    }
+
+    /// First http(s) URL inside a text body, if any.
+    static func firstURL(in text: String) -> String? {
+        guard let range = text.range(of: "http", options: .caseInsensitive) else { return nil }
+        let rest = text[range.lowerBound...]
+        let stop: Set<Character> = [" ", "\"", "'", "<", ">", "\n", "\r", "\t", "\\", ")"]
+        var url = Substring(rest.prefix(2048))
+        while let last = url.last, stop.contains(last) {
+            url = url.dropLast()
+        }
+        let candidate = String(url)
+        guard candidate.count > 8, URL(string: candidate) != nil else { return nil }
+        return candidate
+    }
+
+    /// 网盘-style resolvers often return links with raw spaces or unencoded
+    /// characters, which `URL(string:)` refuses outright. Percent-encode just
+    /// the characters that are illegal anywhere in a URL and try again.
+    static func makeURL(from string: String) -> URL? {
+        if let url = URL(string: string) { return url }
+        let allowed = CharacterSet.urlHostAllowed
+            .union(.urlPathAllowed)
+            .union(.urlQueryAllowed)
+            .union(.urlFragmentAllowed)
+        guard let encoded = string.addingPercentEncoding(withAllowedCharacters: allowed),
+              let url = URL(string: encoded) else { return nil }
+        return url
     }
 
     // MARK: Shim
 
-    /// The `globalThis.lx` host API every LX Music custom source script expects.
-    ///
-    /// `console` is defined too: JavaScriptCore provides none, and most
-    /// user scripts call `console.log` during initialization — without it
-    /// the script's last line throws a ReferenceError and the source never
-    /// reaches "ready".
-    private static let shimSource = """
+    /// The `globalThis.lx` host API every LX Music custom source script
+    /// expects, assembled exactly like the reference app: console (with
+    /// group/groupEnd), atob/btoa, the host object with EVENT_NAMES /
+    /// on / send / request / utils(buffer, zlib) / env / version, then the
+    /// per-script pieces (currentScriptInfo injection, CommonJS adapter,
+    /// hybrid body wrapper, cerumusic compat, window alias) are layered on
+    /// top by `load`.
+    private static let hostSource = """
     globalThis.console = (function() {
       var bridge = globalThis.__lxBridge
+      var groupDepth = 0
       function format(args) {
         var out = []
         for (var i = 0; i < args.length; i++) {
@@ -591,17 +742,48 @@ final class LuoxueScriptRuntime {
       }
       function emit(level) {
         return function() {
-          try { bridge.consoleLog('[' + level + '] ' + format(arguments)) } catch (e) {}
+          try { bridge.consoleLog('[' + level + '] ' + Array(groupDepth).join('  ') + format(arguments)) } catch (e) {}
         }
       }
-      return { log: emit('log'), warn: emit('warn'), error: emit('error'),
-               info: emit('info'), debug: emit('debug'), trace: emit('trace') }
+      return {
+        log: emit('log'), warn: emit('warn'), error: emit('error'),
+        info: emit('info'), debug: emit('debug'), trace: emit('trace'),
+        group: function() { groupDepth++ }, groupEnd: function() { if (groupDepth > 0) groupDepth-- },
+      }
     })()
+
+    // JavaScriptCore has no atob/btoa.
+    globalThis.atob = function(str) {
+      var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
+      var output = ''
+      str = String(str).replace(/=+$/, '')
+      if (str.length % 4 == 1) {
+        throw new Error("'atob' failed: The string to be decoded is not correctly encoded.")
+      }
+      for (var bc = 0, bs = 0, buffer, i = 0;
+           buffer = str.charAt(i++);
+           ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4)
+             ? output += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
+        buffer = chars.indexOf(buffer)
+      }
+      return output
+    }
+    globalThis.btoa = function(str) {
+      var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
+      var output = ''
+      for (var block, charCode, idx = 0, map = chars;
+           str.charAt(idx | 0) || (map = '=', idx % 1);
+           output += map.charAt(63 & block >> 8 - idx % 1 * 8)) {
+        charCode = str.charCodeAt(idx |= 0)
+        block = idx % 3 ? block * 256 + charCode : charCode
+      }
+      return output
+    }
 
     globalThis.lx = (function() {
       var bridge = globalThis.__lxBridge
-      var EVENT_NAMES = { request: 'request', inited: 'inited', updateAlert: 'updateAlert' }
-      var requestHandler = null
+      var EVENT_NAMES = { request: 'request', inited: 'inited', updateAlert: 'updateAlert', showConfigView: 'showConfigView' }
+      var requestHandlers = []
 
       function toBuffer(value) {
         if (value == null) return []
@@ -637,38 +819,20 @@ final class LuoxueScriptRuntime {
             return bridge.bufferToString(toBuffer(buf), type || 'utf8')
           },
         },
-        crypto: {
-          md5: function(text) { return bridge.md5(String(text == null ? '' : text)) },
-          randomBytes: function(size) { return makeBuffer(bridge.randomBytes(Number(size) || 0)) },
-          aesEncrypt: function(data, mode, key, iv) {
-            return makeBuffer(bridge.aesEncrypt(toBuffer(data), String(mode || ''), toBuffer(key), toBuffer(iv)))
-          },
-          aesDecrypt: function(data, mode, key, iv) {
-            return makeBuffer(bridge.aesDecrypt(toBuffer(data), String(mode || ''), toBuffer(key), toBuffer(iv)))
-          },
-          rsaEncrypt: function(data, key) {
-            return makeBuffer(bridge.rsaEncrypt(toBuffer(data), String(key || '')))
-          },
-          rsaDecrypt: function(data, key) {
-            return makeBuffer(bridge.rsaDecrypt(toBuffer(data), String(key || '')))
-          },
+        zlib: {
+          _inflateSync: function(buf) { return bridge.zlibInflate(toBuffer(buf)) },
+          _deflateSync: function(buf) { return bridge.zlibDeflate(toBuffer(buf)) },
         },
       }
 
       return {
         EVENT_NAMES: EVENT_NAMES,
-        currentScriptInfo: {
-          name: globalThis.__lxScriptName || '',
-          description: globalThis.__lxScriptDescription || '',
-          version: globalThis.__lxScriptVersion || '',
-          author: globalThis.__lxScriptAuthor || '',
-        },
+        currentScriptInfo: {},
         on: function(name, handler) {
-          if (name === EVENT_NAMES.request && typeof handler === 'function') requestHandler = handler
+          if (name === EVENT_NAMES.request && typeof handler === 'function') requestHandlers.push(handler)
         },
         send: function(name, data) {
-          if (name === EVENT_NAMES.inited) bridge.scriptInited(data)
-          else if (name === EVENT_NAMES.updateAlert) bridge.scriptUpdateAlert(data)
+          bridge.scriptEvent(name, data)
         },
         request: function(url, options, callback) {
           bridge.httpRequest(url, options || {}, callback)
@@ -676,10 +840,12 @@ final class LuoxueScriptRuntime {
         utils: utils,
         env: globalThis.__lxEnv,
         version: globalThis.__lxVersion,
-        __invokeRequest: function(payload) {
-          if (!requestHandler) return Promise.reject(new Error('no request handler registered'))
+        __handlerCount: function() { return requestHandlers.length },
+        __invokeAt: function(index, payload) {
+          var handler = requestHandlers[index]
+          if (!handler) return Promise.reject(new Error('no request handler registered'))
           try {
-            return Promise.resolve(requestHandler(payload))
+            return Promise.resolve(handler(payload))
           } catch (err) {
             return Promise.reject(err)
           }
@@ -693,122 +859,143 @@ final class LuoxueScriptRuntime {
       }
     })()
 
-    // --- Compatibility layer (modeled on the reference implementations) ---
-
-    // Some scripts address the global object as `window`.
-    globalThis.window = globalThis
-    globalThis.window.lx = globalThis.lx
-
-    // JavaScriptCore has no atob/btoa.
-    if (typeof globalThis.atob !== 'function') {
-      globalThis.atob = function(str) {
-        var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
-        var output = ''
-        str = String(str).replace(/=+$/, '')
-        for (var bc = 0, bs = 0, buffer, i = 0;
-             buffer = str.charAt(i++);
-             ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4)
-               ? output += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
-          buffer = chars.indexOf(buffer)
-        }
-        return output
-      }
-    }
-    if (typeof globalThis.btoa !== 'function') {
-      globalThis.btoa = function(str) {
-        var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
-        var output = ''
-        for (var block, charCode, idx = 0, map = chars;
-             str.charAt(idx | 0) || (map = '=', idx % 1);
-             output += map.charAt(63 & block >> 8 - idx % 1 * 8)) {
-          charCode = str.charCodeAt(idx |= 0)
-          block = idx % 3 ? block * 256 + charCode : charCode
-        }
-        return output
-      }
-    }
-
-    // JSON-looking string response bodies become hybrid String objects that
-    // also expose the parsed value (.json/.text/.data/.raw): scripts that
-    // call JSON.parse(body) and scripts that read body.code both work.
-    globalThis.__lxNativeRequest = globalThis.lx.request
-    globalThis.lx.request = function(url, options, callback) {
-      return globalThis.__lxNativeRequest(url, options || {}, function(err, resp) {
-        try {
-          if (!err && resp && typeof resp === 'object' && typeof resp.body === 'string') {
-            var raw = resp.body
-            var first = raw.replace(/^\\s+/, '').charAt(0)
-            if (first === '{' || first === '[') {
-              try {
-                var parsed = JSON.parse(raw)
-                if (parsed && typeof parsed === 'object') {
-                  var hybrid = new String(raw)
-                  Object.assign(hybrid, parsed)
-                  hybrid.raw = raw
-                  hybrid.text = raw
-                  resp.body = hybrid
-                  if (resp.text == null) resp.text = raw
-                  if (resp.json == null) resp.json = parsed
-                  if (resp.data == null) resp.data = parsed
-                }
-              } catch (_) {}
-            }
-          }
-        } catch (_) {}
-        callback(err, resp)
-      })
-    }
-
-    // CommonJS module globals, for plugin scripts written as
-    // `module.exports = { sources, musicUrl }` instead of the LX protocol.
-    globalThis.module = globalThis.module || { exports: {} }
-    globalThis.exports = globalThis.module.exports
+    window = globalThis
+    window.lx = globalThis.lx
     """
-}
 
-/// Evaluated AFTER the user script: adapts CommonJS-style plugins
-/// (`module.exports.musicUrl` + `.sources`) onto the LX protocol so they
-/// behave like ordinary custom sources.
-private extension LuoxueScriptRuntime {
-    static let commonJSAdapterSource = """
+    /// Evaluated BEFORE each user script: CommonJS plugins expect `module`
+    /// and `exports` to already exist.
+    private static let modulePreludeSource = """
+    (function() {
+      if (!globalThis.module) globalThis.module = { exports: {} }
+      globalThis.exports = globalThis.module.exports
+    })();
+    """
+
+    /// Evaluated AFTER each user script: adapts CommonJS-style plugins
+    /// (`module.exports.musicUrl` + `.sources`) onto the LX protocol, exactly
+    /// like the reference app's adapter.
+    private static let commonJSAdapterSource = """
     (function() {
       try {
-        var exp = globalThis.module && globalThis.module.exports
-        if (!exp || typeof exp.musicUrl !== 'function' || !exp.sources) return
+        const exp = globalThis.module && globalThis.module.exports;
+        if (!exp || typeof exp.musicUrl !== 'function' || !exp.sources) return;
 
-        var pluginInfo = exp.pluginInfo || {}
-        var sources = exp.sources || {}
-        var mapped = {}
+        const pluginInfo = exp.pluginInfo || {};
+        const sources = exp.sources || {};
+        const mapped = {};
 
-        for (var id of Object.keys(sources)) {
-          var s = sources[id]
-          if (!s || typeof s !== 'object') continue
-          var q = Array.isArray(s.qualitys) ? s.qualitys : []
+        for (const id of Object.keys(sources)) {
+          const s = sources[id];
+          if (!s || typeof s !== 'object') continue;
+          const q = Array.isArray(s.qualitys) ? s.qualitys : [];
           mapped[id] = {
             name: (pluginInfo.name ? (pluginInfo.name + ' - ') : '') + (s.name || id),
             type: 'music',
             actions: ['musicUrl'],
             qualitys: q,
-          }
+          };
         }
 
         if (Object.keys(mapped).length) {
-          globalThis.lx.send('inited', { sources: mapped })
-          globalThis.lx.on('request', function(payload) {
-            if (!payload || payload.action !== 'musicUrl') return
-            var quality = payload.info && payload.info.type
-            var musicInfo = (payload.info && payload.info.musicInfo) || {}
-            return Promise.resolve(exp.musicUrl(payload.source, musicInfo, quality)).then(function(res) {
-              if (typeof res === 'string') return res
-              // Objects keep their headers ({url, headers}) so the host can
-              // attach them to the media requests.
-              if (res && typeof res.url === 'string') return res
-              return ''
-            })
-          })
+          lx.send('inited', { sources: mapped });
         }
+
+        lx.on('request', ({ action, source, info }) => {
+          if (action !== 'musicUrl') return;
+          const quality = info && info.type;
+          const musicInfo = (info && info.musicInfo) || {};
+          return Promise.resolve(exp.musicUrl(source, musicInfo, quality)).then(res => {
+            if (typeof res === 'string') return res;
+            // Objects keep their headers ({url, headers}) so the host can
+            // attach them to the media requests.
+            if (res && typeof res.url === 'string') return res;
+            return '';
+          });
+        });
       } catch (e) {}
-    })()
+    })();
+    """
+
+    /// JSON-looking string response bodies become hybrid String objects that
+    /// also expose the parsed value (.json/.text/.data/.raw): scripts that
+    /// call JSON.parse(body) and scripts that read body.code both work —
+    /// the reference app's wrapper, verbatim.
+    private static let hybridBodyWrapperSource = """
+    (function() {
+      if (globalThis.__lxWrapped) return
+      globalThis.__lxWrapped = true
+      const __nativeRequest = lx.request;
+      lx.request = function(url, options, callback) {
+        return __nativeRequest(url, options, function(err, resp) {
+          try {
+            if (!err && resp && typeof resp === 'object' && typeof resp.body === 'string') {
+              const raw = resp.body;
+              const first = raw.replace(/^\\s+/, '').charAt(0);
+              if (first === '{' || first === '[') {
+                try {
+                  const parsed = JSON.parse(raw);
+                  if (parsed && typeof parsed === 'object') {
+                    const hybrid = new String(raw);
+                    Object.assign(hybrid, parsed);
+                    hybrid.raw = raw;
+                    hybrid.text = raw;
+                    resp.body = hybrid;
+                    if (resp.text == null) resp.text = raw;
+                    if (resp.json == null) resp.json = parsed;
+                    if (resp.data == null) resp.data = parsed;
+                  }
+                } catch (_) {}
+              }
+            }
+          } catch (_) {}
+          callback(err, resp);
+        });
+      };
+    })();
+    """
+
+    /// Promise-based request wrapper compatible with cerumusic plugins,
+    /// like the reference app.
+    private static let cerumusicCompatSource = """
+    (function() {
+      if (globalThis.__ceruCompat) return
+      globalThis.__ceruCompat = true
+      globalThis.module = globalThis.module || { exports: {} };
+      globalThis.exports = globalThis.module.exports;
+      globalThis.cerumusic = globalThis.cerumusic || {};
+      globalThis.cerumusic.request = function(url, options) {
+        return new Promise((resolve, reject) => {
+          try {
+            lx.request(url, options || { method: 'GET' }, (err, resp) => {
+              if (err) reject(err);
+              else resolve(resp);
+            });
+          } catch (e) { reject(e); }
+        });
+      };
+      globalThis.cerumusic.NoticeCenter = function() {};
+    })();
+    """
+
+    /// Promise wrappers for zlib, like the reference app.
+    private static let zlibPromiseSource = """
+    lx.utils.zlib.inflate = function(buf) {
+      return new Promise((resolve, reject) => {
+        try {
+          var res = lx.utils.zlib._inflateSync(buf);
+          if (res) resolve(res); else reject(new Error('Inflate failed'));
+        } catch(e) { reject(e); }
+      });
+    };
+    lx.utils.zlib.deflate = function(buf) {
+      return new Promise((resolve, reject) => {
+        try {
+          var res = lx.utils.zlib._deflateSync(buf);
+          if (res) resolve(res); else reject(new Error('Deflate failed'));
+        } catch(e) { reject(e); }
+      });
+    };
     """
 }
 
@@ -823,13 +1010,20 @@ final class LuoxueSettlementBox: @unchecked Sendable {
         guard !settled else { return }
         settled = true
         if let urlString = Self.urlString(from: value),
-           let url = Self.makeURL(from: urlString),
+           let url = LxScriptEngine.makeURL(from: urlString),
            url.scheme == "http" || url.scheme == "https" {
             finish?(.success(LuoxueResolvedMusic(url: url, headers: Self.headers(from: value))))
         } else {
             let raw = value.isString ? (value.toString() ?? "") : "non-string result"
             finish?(.failure(LuoxueScriptError.invalidURL(raw)))
         }
+    }
+
+    /// The captured-URL fallback path: no script headers to carry.
+    func succeedURL(_ string: String, _ url: URL) {
+        guard !settled else { return }
+        settled = true
+        finish?(.success(LuoxueResolvedMusic(url: url, headers: [:], fromRequestCapture: true)))
     }
 
     /// Sources that answer with `{ url, headers: { User-Agent: … } }`: the
@@ -844,20 +1038,6 @@ final class LuoxueSettlementBox: @unchecked Sendable {
             parsed[name] = (item as? String) ?? ""
         }
         return parsed
-    }
-
-    /// 网盘-style resolvers often return links with raw spaces or unencoded
-    /// characters, which `URL(string:)` refuses outright. Percent-encode just
-    /// the characters that are illegal anywhere in a URL and try again.
-    private static func makeURL(from string: String) -> URL? {
-        if let url = URL(string: string) { return url }
-        let allowed = CharacterSet.urlHostAllowed
-            .union(.urlPathAllowed)
-            .union(.urlQueryAllowed)
-            .union(.urlFragmentAllowed)
-        guard let encoded = string.addingPercentEncoding(withAllowedCharacters: allowed),
-              let url = URL(string: encoded) else { return nil }
-        return url
     }
 
     func fail(_ error: any Error) {
@@ -886,7 +1066,7 @@ final class LuoxueSettlementBox: @unchecked Sendable {
     }
 }
 
-final class LuoxuePromiseCallbacks: NSObject, LuoxuePromiseExports {
+final class LuoxuePromiseCallbacks: NSObject, LxPromiseExports {
     var onResolve: ((JSValue) -> Void)?
     var onReject: ((JSValue) -> Void)?
 
@@ -894,10 +1074,21 @@ final class LuoxuePromiseCallbacks: NSObject, LuoxuePromiseExports {
     func reject(_ error: JSValue) { onReject?(error) }
 }
 
-// MARK: - Crypto
+// MARK: - Buffers
 
-/// Native implementations of the helpers LX Music scripts use from `lx.utils`.
-enum LuoxueCrypto {
+/// Byte-array buffer helpers behind `lx.utils.buffer`.
+enum LxBuffer {
+    static func bytes(from value: JSValue) -> [UInt8] {
+        if value.isArray {
+            let array = value.toArray() as? [Any] ?? []
+            return array.compactMap { ($0 as? NSNumber)?.uint8Value }
+        }
+        if value.isString {
+            return Array((value.toString() ?? "").utf8)
+        }
+        return []
+    }
+
     static func bytes(fromString string: String, encoding: String) -> [UInt8] {
         switch encoding.lowercased() {
         case "base64":
@@ -921,96 +1112,6 @@ enum LuoxueCrypto {
         }
     }
 
-    static func md5Hex(_ text: String) -> String {
-        let digest = Insecure.MD5.hash(data: Data(text.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
-    }
-
-    static func randomBytes(_ count: Int) -> [UInt8] {
-        guard count > 0 else { return [] }
-        var bytes = [UInt8](repeating: 0, count: count)
-        let status = SecRandomCopyBytes(kSecRandomDefault, count, &bytes)
-        return status == errSecSuccess ? bytes : []
-    }
-
-    static func aesCrypt(
-        operation: CCOperation,
-        data: [UInt8],
-        mode: String,
-        key: [UInt8],
-        iv: [UInt8]
-    ) -> [UInt8] {
-        // Mode strings look like "aes-128-cbc" / "aes-256-ecb".
-        let parts = mode.lowercased().split(separator: "-")
-        var keyLength = 16
-        if let bitsPart = parts.compactMap({ Int($0) }).first(where: { $0 >= 128 && $0 <= 256 }) {
-            keyLength = bitsPart / 8
-        }
-        let useECB = parts.contains("ecb")
-
-        var keyBytes = [UInt8](repeating: 0, count: keyLength)
-        if !key.isEmpty {
-            for index in 0..<min(key.count, keyLength) { keyBytes[index] = key[index] }
-        }
-        var ivBytes = [UInt8](repeating: 0, count: kCCBlockSizeAES128)
-        if !useECB, !iv.isEmpty {
-            for index in 0..<min(iv.count, kCCBlockSizeAES128) { ivBytes[index] = iv[index] }
-        }
-
-        var outputLength = 0
-        var output = [UInt8](repeating: 0, count: data.count + kCCBlockSizeAES128 * 2)
-        let status = CCCrypt(
-            operation,
-            CCAlgorithm(kCCAlgorithmAES),
-            CCOptions(kCCOptionPKCS7Padding | (useECB ? kCCOptionECBMode : 0)),
-            keyBytes,
-            keyLength,
-            useECB ? nil : ivBytes,
-            data.isEmpty ? nil : data,
-            data.count,
-            &output,
-            output.count,
-            &outputLength
-        )
-        guard status == kCCSuccess else { return [] }
-        return Array(output[0..<outputLength])
-    }
-
-    static func rsaCrypt(operation: CCOperation, data: [UInt8], pem: String) -> [UInt8] {
-        let base64 = pem
-            .replacingOccurrences(of: "-----BEGIN PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "-----BEGIN RSA PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "-----END RSA PUBLIC KEY-----", with: "")
-            .replacingOccurrences(of: "-----BEGIN PRIVATE KEY-----", with: "")
-            .replacingOccurrences(of: "-----END PRIVATE KEY-----", with: "")
-            .replacingOccurrences(of: "-----BEGIN RSA PRIVATE KEY-----", with: "")
-            .replacingOccurrences(of: "-----END RSA PRIVATE KEY-----", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-            .replacingOccurrences(of: "\r", with: "")
-            .replacingOccurrences(of: " ", with: "")
-        guard let keyData = Data(base64Encoded: base64), !keyData.isEmpty else { return [] }
-
-        let isDecrypt = operation == CCOperation(kCCDecrypt)
-        let attributes: [String: Any] = [
-            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
-            kSecAttrKeyClass as String: isDecrypt ? kSecAttrKeyClassPrivate : kSecAttrKeyClassPublic,
-        ]
-        var cfError: Unmanaged<CFError>?
-        guard let key = SecKeyCreateWithData(keyData as CFData, attributes as CFDictionary, &cfError) else {
-            return []
-        }
-        let algorithm: SecKeyAlgorithm = .rsaEncryptionPKCS1
-        var result: CFData?
-        if isDecrypt {
-            result = SecKeyCreateDecryptedData(key, algorithm, Data(data) as CFData, &cfError)
-        } else {
-            result = SecKeyCreateEncryptedData(key, algorithm, Data(data) as CFData, &cfError)
-        }
-        guard let result else { return [] }
-        return [UInt8](result as Data)
-    }
-
     private static func hexToBytes(_ string: String) -> [UInt8] {
         let characters = Array(string)
         guard characters.count % 2 == 0 else { return [] }
@@ -1024,5 +1125,51 @@ enum LuoxueCrypto {
 
     private static func bytesToHex(_ bytes: [UInt8]) -> String {
         bytes.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+// MARK: - zlib
+
+/// `lx.utils.zlib` native side. Apple's `COMPRESSION_ZLIB` is raw DEFLATE
+/// (RFC 1951); zlib-wrapped input (RFC 1950) carries a 2-byte header that is
+/// skipped on the fallback attempt.
+enum LxZlib {
+    static func inflate(_ data: [UInt8]) -> [UInt8] {
+        guard !data.isEmpty else { return [] }
+        if let out = rawInflate(data) { return out }
+        if data.count > 2, data[0] == 0x78, let out = rawInflate(Array(data[2...])) { return out }
+        return []
+    }
+
+    static func deflate(_ data: [UInt8]) -> [UInt8] {
+        guard !data.isEmpty else { return [] }
+        let capacity = data.count + data.count / 2 + 256
+        var destination = [UInt8](repeating: 0, count: capacity)
+        let written = data.withUnsafeBufferPointer { source in
+            destination.withUnsafeMutableBufferPointer { destinationBuffer in
+                compression_encode_buffer(
+                    destinationBuffer.baseAddress!, destinationBuffer.count,
+                    source.baseAddress!, source.count,
+                    nil, COMPRESSION_ZLIB)
+            }
+        }
+        guard written > 0 else { return [] }
+        return Array(destination[0..<written])
+    }
+
+    private static func rawInflate(_ source: [UInt8]) -> [UInt8]? {
+        guard !source.isEmpty else { return nil }
+        let capacity = max(source.count * 8, 64 * 1024)
+        var destination = [UInt8](repeating: 0, count: capacity)
+        let written = source.withUnsafeBufferPointer { sourceBuffer in
+            destination.withUnsafeMutableBufferPointer { destinationBuffer in
+                compression_decode_buffer(
+                    destinationBuffer.baseAddress!, destinationBuffer.count,
+                    sourceBuffer.baseAddress!, sourceBuffer.count,
+                    nil, COMPRESSION_ZLIB)
+            }
+        }
+        guard written > 0 else { return nil }
+        return Array(destination[0..<written])
     }
 }

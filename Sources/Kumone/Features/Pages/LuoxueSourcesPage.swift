@@ -157,7 +157,7 @@ struct LuoxueSourcesPage: View {
                     .font(.subheadline.weight(.semibold))
 
                 HStack(spacing: 8) {
-                    TextField(String(localized: "输入脚本直链 (latest.js)"), text: $linkInput)
+                    TextField(String(localized: "输入脚本 URL（支持 GitHub）"), text: $linkInput)
                         .textFieldStyle(.roundedBorder)
                         #if os(iOS)
                         .autocorrectionDisabled()
@@ -203,18 +203,18 @@ struct LuoxueSourcesPage: View {
                         icon: "doc.on.clipboard",
                         action: importFromClipboard)
                     sourceActionButton(
-                        title: String(localized: "音源体检"),
+                        title: String(localized: "音源健康检测"),
                         icon: "waveform.path.ecg",
                         action: runHealthCheck,
                         busy: checking)
                 }
 
-                Text("本地导入支持一次选择多个脚本，或直接选择整个文件夹批量导入")
+                Text("本地导入支持文件多选导入，或直接选择整个文件夹批量导入")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
 
                 // Build marker: lets the user confirm which build is running.
-                Text("当前构建：2026-11-10.11（网盘链接自定义请求头：脚本返回headers+设置页可配；VIP歌曲下载走自定义源）")
+                Text("当前构建：2026-11-10.12（落雪自定义音源引擎一比一复刻自畅怡守：单上下文多脚本、逐音质逐源回退、请求链接捕获兜底）")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
 
@@ -253,7 +253,7 @@ struct LuoxueSourcesPage: View {
                     Image(systemName: "music.note.list")
                         .font(.system(size: 26))
                         .foregroundStyle(.tertiary)
-                    Text("还没有导入音源")
+                    Text("暂无自定义源")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -281,7 +281,7 @@ struct LuoxueSourcesPage: View {
             Text("已导入音源")
         } footer: {
             if !manager.entries.isEmpty {
-                Text("开关控制该源是否参与解析；多个源同时开启时按列表顺序依次尝试。刷新会重新下载在线源并重载脚本。")
+                Text("开关控制该源是否参与解析；多个源同时开启时共用一个引擎、按列表顺序依次尝试，全部失败时自动降级音质并切换下一个源。")
             }
         }
     }
@@ -438,6 +438,11 @@ private struct LuoxueSourceRow: View {
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                    } else {
+                        Text("该源还没有绑定 URL")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
                     }
                 }
 

@@ -146,18 +146,21 @@ enum LuoxueURLConverter {
 /// block (the `@name` / `@version` headers the ecosystem uses).
 enum LuoxueScriptMetadata {
     static func name(in script: String, fallback: String) -> String {
-        // The LX Music ecosystem writes metadata as comment headers, e.g.
-        //   // @name 某音源
-        //   /*!
-        //    * @name 某音源
-        //    */
-        if let regex = try? NSRegularExpression(pattern: "@name\\s+([^\\r\\n*]+)"),
-           let match = regex.firstMatch(in: script, range: NSRange(script.startIndex..., in: script)),
-           let range = Range(match.range(at: 1), in: script) {
-            let value = script[range]
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !value.isEmpty { return value }
+        meta(in: script)["name"] ?? fallback
+    }
+
+    /// All `@key value` comment headers the script declares — the
+    /// `@name/@description/@version/@author` block the reference app feeds
+    /// into `lx.currentScriptInfo` for every script it loads.
+    static func meta(in script: String) -> [String: String] {
+        var parsed: [String: String] = [:]
+        for key in ["name", "description", "version", "author"] {
+            guard let regex = try? NSRegularExpression(pattern: "@\(key)\\s+([^\\r\\n*]+)"),
+                  let match = regex.firstMatch(in: script, range: NSRange(script.startIndex..., in: script)),
+                  let range = Range(match.range(at: 1), in: script) else { continue }
+            let value = script[range].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty { parsed[key] = value }
         }
-        return fallback
+        return parsed
     }
 }
