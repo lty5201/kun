@@ -429,8 +429,9 @@ final class LxScriptEngine {
         finisher?()
     }
 
-    /// `send(EVENT_NAMES.inited, { status, sources })` and friends.
-    private func handleScriptEvent(_ name: String, payload: JSValue) {
+    /// `send(EVENT_NAMES.inited, { status, sources })` and friends. Called by
+    /// the native bridge, so not private.
+    func handleScriptEvent(_ name: String, payload: JSValue) {
         guard let object = payload.toObject() as? [String: Any] else { return }
         switch name {
         case "inited":
