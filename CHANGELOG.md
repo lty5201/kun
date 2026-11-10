@@ -7,6 +7,20 @@
 `---` 分隔，随后是完整的**中文**部分（`### 新增` / `### 修复` / `### 改进`）。英文块与中文块
 的条目一一对应、顺序一致。（0.3.19 起采用此双语分块格式；更早的版本沿用旧的中英交替格式。）
 
+## 0.4.4 - 2026-11-10
+
+### Fixed
+
+- **Playback (iOS)**: 网盘 (cloud-drive) custom sources failed to play. The resource loader demanded byte-range responses that exactly matched the range it asked for — 206 with identical Content-Range bounds — but cloud-drive hosts routinely answer with a different (often larger) range, ignore Range entirely and return 200 with the whole body, or label audio files `application/octet-stream`; every one of those fell into a redirect to the bare link, which strips the User-Agent/Referer/Cookie headers the host requires and answers 403. The loader now accepts what actually arrived (any valid 206 range, or a 200 whole body), streams the extra bytes into the cache, skips ahead when a whole-body answer starts before the requested offset, guesses mp3 for octet-stream audio, and — when headers are required — reports the real error instead of redirecting to a guaranteed 403.
+
+---
+
+### 修复
+
+- **播放（iOS）**：网盘类自定义源无法播放。资源加载器此前要求响应与请求的字节区间完全一致（206 且 Content-Range 分毫不差），而网盘主机经常返回与请求不同（往往更大）的区间、无视 Range 直接返回 200 全量、或把音频标成 `application/octet-stream`——这些情况都会触发“重定向到裸链接”，丢掉主机要求的 User-Agent/Referer/Cookie 请求头而被 403 拒绝。现在加载器按实际返回的数据工作（接受任意有效的 206 区间或 200 全量），多余字节照常写入缓存，全量响应从请求偏移之前开始时自动跳过，octet-stream 音频按 mp3 兜底处理；必须带请求头的链接在无法继续时如实报错，不再重定向到必然 403 的裸链接。
+
+---
+
 ## 0.4.3 - 2026-11-10
 
 ### Fixed

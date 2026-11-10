@@ -137,6 +137,9 @@ final class CachingAudioResourceLoader: NSObject {
     private var cachingDisabled = false
     private var fileHandleClosed = false
     private var redirectsToRemoteAsset = false
+    /// The error that forced the loader to give up, reported to later
+    /// loading requests when a header-less redirect is not an option.
+    private var bypassError: Error?
     private var cancelled = false
 
     private final class PendingRequest {
@@ -483,25 +486,33 @@ final class CachingAudioResourceLoader: NSObject {
             initializeResource(from: response, for: networkTask, completionHandler: completionHandler)
             return
         }
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 206 else {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            failRequests(for: networkTask, with: CachingAudioResourceLoaderError.unsupportedResponse(response))
+            completionHandler(.cancel)
+            return
+        }
+        // Tolerant: 网盘 (cloud-drive) hosts answer range requests with a
+        // different — often larger — range than asked, or ignore Range
+        // entirely and answer 200 with the whole body. Accept what actually
+        // arrived and let the byte planner cache whatever range the data
+        // covers, instead of failing the strict equality check the official
+        // CDN happens to satisfy.
+        if httpResponse.statusCode == 206,
+           let contentRange = httpResponse.value(forHTTPHeaderField: "Content-Range"),
+           let parsedRange = Self.parseContentRange(contentRange) {
+            networkTask.range = parsedRange.lowerBound..<parsedRange.upperBound
+            networkTask.responseStart = parsedRange.lowerBound
+        } else if httpResponse.statusCode == 200,
+                  let contentLength = httpResponse.value(forHTTPHeaderField: "Content-Length").flatMap({ Int64($0) }),
+                  contentLength > 0 {
+            // Range ignored: the body is the whole file from byte 0.
+            networkTask.range = 0..<contentLength
+            networkTask.responseStart = 0
+        } else {
             failRequests(for: networkTask, with: CachingAudioResourceLoaderError.byteRangesUnavailable(remoteURL))
             completionHandler(.cancel)
             return
         }
-        guard let range = networkTask.range,
-              let expectedContentLength,
-              let contentRange = httpResponse.value(forHTTPHeaderField: "Content-Range"),
-              let parsedRange = Self.parseContentRange(contentRange),
-              parsedRange.lowerBound == range.lowerBound,
-              parsedRange.upperBound == range.upperBound,
-              parsedRange.totalLength == expectedContentLength else {
-            failRequests(for: networkTask, with: CachingAudioResourceLoaderError.unexpectedContentRange(
-                httpResponse.value(forHTTPHeaderField: "Content-Range")
-            ))
-            completionHandler(.cancel)
-            return
-        }
-        networkTask.responseStart = parsedRange.lowerBound
         completionHandler(.allow)
     }
 
@@ -517,29 +528,26 @@ final class CachingAudioResourceLoader: NSObject {
             )
             return
         }
-        guard httpResponse.statusCode == 206 else {
+        // Tolerant: accept 206 with ANY bounds (网盘 hosts often return a
+        // different range than the one asked for) and 200 with the whole
+        // body (Range ignored). The total length is the only thing the
+        // loader truly needs from this first response.
+        let totalLength: Int64
+        if httpResponse.statusCode == 206,
+           let contentRangeValue = httpResponse.value(forHTTPHeaderField: "Content-Range"),
+           let parsedRange = Self.parseContentRange(contentRangeValue) {
+            totalLength = parsedRange.totalLength
+            networkTask.range = parsedRange.lowerBound..<parsedRange.upperBound
+            networkTask.responseStart = parsedRange.lowerBound
+        } else if httpResponse.statusCode == 200,
+                  let contentLength = httpResponse.value(forHTTPHeaderField: "Content-Length").flatMap({ Int64($0) }),
+                  contentLength > 0 {
+            totalLength = contentLength
+            networkTask.range = 0..<contentLength
+            networkTask.responseStart = 0
+        } else {
             redirectToRemoteAsset(
                 after: CachingAudioResourceLoaderError.byteRangesUnavailable(remoteURL),
-                completionHandler: completionHandler
-            )
-            return
-        }
-        let contentRangeValue = httpResponse.value(forHTTPHeaderField: "Content-Range")
-        guard let contentRangeValue,
-              let parsedRange = Self.parseContentRange(contentRangeValue),
-              parsedRange.lowerBound == networkTask.requestedOffset else {
-            redirectToRemoteAsset(
-                after: CachingAudioResourceLoaderError.unexpectedContentRange(contentRangeValue),
-                completionHandler: completionHandler
-            )
-            return
-        }
-        let expectedUpperBound = networkTask.requestedUpperBound.map {
-            min($0, parsedRange.totalLength)
-        } ?? parsedRange.totalLength
-        guard parsedRange.upperBound == expectedUpperBound else {
-            redirectToRemoteAsset(
-                after: CachingAudioResourceLoaderError.unexpectedContentRange(contentRangeValue),
                 completionHandler: completionHandler
             )
             return
@@ -547,10 +555,19 @@ final class CachingAudioResourceLoader: NSObject {
 
         let responseContentType = httpResponse.mimeType
             ?? httpResponse.value(forHTTPHeaderField: "Content-Type")
-        guard let fileExtension = Self.fileExtension(
+        var fileExtension = Self.fileExtension(
             for: remoteURL,
             contentType: responseContentType
-        ), let resourceContentType = Self.resourceContentType(for: fileExtension) else {
+        )
+        if fileExtension == nil, !headers.isEmpty {
+            // 网盘 hosts label audio files application/octet-stream and the
+            // URL often carries no extension. A bare redirect would drop the
+            // headers and answer 403, so guess mp3 — AVFoundation probes the
+            // actual bytes for the real format anyway.
+            fileExtension = "mp3"
+        }
+        guard let fileExtension,
+              let resourceContentType = Self.resourceContentType(for: fileExtension) else {
             redirectToRemoteAsset(
                 after: CachingAudioResourceLoaderError.unsupportedFileType(remoteURL),
                 completionHandler: completionHandler
@@ -558,18 +575,16 @@ final class CachingAudioResourceLoader: NSObject {
             return
         }
 
-        networkTask.range = parsedRange.lowerBound..<parsedRange.upperBound
-        networkTask.responseStart = parsedRange.lowerBound
         guard Self.canCache(
-            contentLength: parsedRange.totalLength,
+            contentLength: totalLength,
             maximumSizeMB: maximumCacheSizeMB
         ) else {
             print(CachingAudioResourceLoaderError.fileExceedsCacheLimit(
-                contentLength: parsedRange.totalLength,
+                contentLength: totalLength,
                 maximumSizeMB: maximumCacheSizeMB
             ).localizedDescription)
             beginRangeStreaming(
-                contentLength: parsedRange.totalLength,
+                contentLength: totalLength,
                 contentType: responseContentType,
                 resourceContentType: resourceContentType,
                 networkTask: networkTask,
@@ -629,7 +644,7 @@ final class CachingAudioResourceLoader: NSObject {
                         return
                     }
                     self.beginCaching(
-                        contentLength: parsedRange.totalLength,
+                        contentLength: totalLength,
                         contentType: responseContentType,
                         resourceContentType: resourceContentType,
                         writeSession: writeSession,
@@ -649,7 +664,7 @@ final class CachingAudioResourceLoader: NSObject {
                     }
                     print("Audio cache write disabled for this track: \(failureDescription)")
                     self.beginRangeStreaming(
-                        contentLength: parsedRange.totalLength,
+                        contentLength: totalLength,
                         contentType: responseContentType,
                         resourceContentType: resourceContentType,
                         networkTask: networkTask,
@@ -739,6 +754,26 @@ final class CachingAudioResourceLoader: NSObject {
             completionHandler(.cancel)
             return
         }
+        // A bare redirect drops the headers the file host insists on — 网盘
+        // links answer 403 without them — so when headers are required the
+        // honest outcome is failing with the real error instead of a
+        // guaranteed rejection.
+        if !headers.isEmpty {
+            redirectsToRemoteAsset = true
+            bypassError = error
+            print("Audio cache failed for this track: \(error.localizedDescription)")
+            let loadingRequests = pendingRequests.values.map(\.loadingRequest)
+            pendingRequests.removeAll()
+            cancelNetworkTasks()
+            session.invalidateAndCancel()
+            closeFileHandle()
+            completionHandler(.cancel)
+            for loadingRequest in loadingRequests {
+                loadingRequest.finishLoading(with: error)
+            }
+            discardWriteSessionIfAny()
+            return
+        }
         redirectsToRemoteAsset = true
         print("Audio cache bypassed for this track: \(error.localizedDescription)")
         let loadingRequests = pendingRequests.values.map(\.loadingRequest)
@@ -750,6 +785,10 @@ final class CachingAudioResourceLoader: NSObject {
         for loadingRequest in loadingRequests {
             redirectToRemoteAsset(loadingRequest)
         }
+        discardWriteSessionIfAny()
+    }
+
+    private func discardWriteSessionIfAny() {
         if !cacheCommitStarted, let writeSession {
             self.writeSession = nil
             let cache = cache
@@ -757,13 +796,21 @@ final class CachingAudioResourceLoader: NSObject {
                 do {
                     try await cache.discard(writeSession)
                 } catch {
-                    print("Audio cache could not discard a bypassed write: \(error)")
+                    print("Audio cache could not discard a bypassed write: \(error.localizedDescription)")
                 }
             }
         }
     }
 
     private func redirectToRemoteAsset(_ loadingRequest: AVAssetResourceLoadingRequest) {
+        if !headers.isEmpty {
+            // Header-dependent link: a bare redirect is a guaranteed 403.
+            // Report the real reason the loader had to give up.
+            loadingRequest.finishLoading(
+                with: bypassError ?? CachingAudioResourceLoaderError.redirectUnavailable(remoteURL)
+            )
+            return
+        }
         let redirectRequest = URLRequest(url: remoteURL)
         guard let redirectResponse = HTTPURLResponse(
             url: loadingRequest.request.url ?? assetURL,
@@ -830,13 +877,27 @@ final class CachingAudioResourceLoader: NSObject {
     ) {
         guard let pending = pendingRequests[pendingRequestID],
               let range = pending.range else { return }
-        guard dataStart == pending.deliveredOffset,
-              pending.deliveredOffset + Int64(data.count) <= range.upperBound else {
+        var payload = data
+        var payloadStart = dataStart
+        // A server that ignored the Range header starts at byte 0; skip
+        // ahead to the offset this request actually asked for.
+        if payloadStart < pending.deliveredOffset {
+            let skip = min(Int64(payload.count), pending.deliveredOffset - payloadStart)
+            payload = payload.dropFirst(Int(skip))
+            payloadStart += skip
+            if payload.isEmpty { return }
+        }
+        guard payloadStart == pending.deliveredOffset else {
             fail(pending, with: CachingAudioResourceLoaderError.unexpectedContentRange(nil))
             return
         }
-        pending.loadingRequest.dataRequest?.respond(with: data)
-        pending.deliveredOffset += Int64(data.count)
+        // Deliver at most what this request asked for — a whole-body answer
+        // keeps streaming past the requested range.
+        let deliverableCount = min(Int64(payload.count), range.upperBound - pending.deliveredOffset)
+        if deliverableCount > 0 {
+            pending.loadingRequest.dataRequest?.respond(with: payload.prefix(Int(deliverableCount)))
+            pending.deliveredOffset += deliverableCount
+        }
         if pending.deliveredOffset == range.upperBound {
             finish(pending)
         }
@@ -1100,6 +1161,9 @@ final class CachingAudioResourceLoader: NSObject {
         case "audio/aac": return "aac"
         case "audio/flac", "audio/x-flac": return "flac"
         case "audio/ogg": return "ogg"
+        // 网盘 hosts label audio files octet-stream; AVFoundation probes the
+        // actual bytes, so mp3 is a safe generic guess.
+        case "application/octet-stream", "binary/octet-stream": return "mp3"
         default: return nil
         }
     }
