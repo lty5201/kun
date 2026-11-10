@@ -3,6 +3,7 @@ import JavaScriptCore
 import CryptoKit
 import CommonCrypto
 import Security
+import os
 
 // MARK: - Error
 
@@ -35,6 +36,8 @@ enum LuoxueScriptError: LocalizedError {
 /// Native surface the Luoxue (LX Music) user script talks to. Every method is
 /// invoked by JavaScriptCore on the runtime's serial queue.
 @objc protocol LuoxueBridgeExports: JSExport {
+    // Console sink behind the shim's `console.log/warn/error/...`.
+    func consoleLog(_ message: JSValue)
     // HTTP request primitive behind `lx.request(url, options, callback)`.
     func httpRequest(_ url: JSValue, _ options: JSValue, _ callback: JSValue)
     // Lifecycle events sent by the script via `lx.send(EVENT_NAMES.inited, ...)`.
@@ -71,6 +74,15 @@ final class LuoxueNativeBridge: NSObject, LuoxueBridgeExports {
     init(runtime: LuoxueScriptRuntime) {
         self.runtime = runtime
         super.init()
+    }
+
+    // MARK: Console
+
+    private static let consoleLog = Logger(subsystem: "sb.moe.kumone", category: "lx-console")
+
+    func consoleLog(_ message: JSValue) {
+        let text = message.toString() ?? ""
+        Self.consoleLog.info("\(text, privacy: .public)")
     }
 
     // MARK: HTTP
@@ -391,7 +403,15 @@ final class LuoxueScriptRuntime {
                     "action": "musicUrl",
                     "info": [
                         "type": quality,
-                        "musicInfo": ["songId": songID],
+                        // LX Music scripts read the id from `songmid`, `id` or
+                        // `mid` — a lone `songId` key is invisible to them and
+                        // every request failed with "缺少歌曲ID".
+                        "musicInfo": [
+                            "songmid": String(songID),
+                            "id": String(songID),
+                            "songId": songID,
+                            "source": source,
+                        ],
                     ],
                 ]
                 guard let payloadValue = JSValue(object: payload, in: context) else {
@@ -519,7 +539,35 @@ final class LuoxueScriptRuntime {
     // MARK: Shim
 
     /// The `globalThis.lx` host API every LX Music custom source script expects.
+    ///
+    /// `console` is defined too: JavaScriptCore provides none, and most
+    /// user scripts call `console.log` during initialization — without it
+    /// the script's last line throws a ReferenceError and the source never
+    /// reaches "ready".
     private static let shimSource = """
+    globalThis.console = (function() {
+      var bridge = globalThis.__lxBridge
+      function format(args) {
+        var out = []
+        for (var i = 0; i < args.length; i++) {
+          var a = args[i]
+          try {
+            out.push(typeof a === 'string' ? a : JSON.stringify(a))
+          } catch (e) {
+            out.push(String(a))
+          }
+        }
+        return out.join(' ')
+      }
+      function emit(level) {
+        return function() {
+          try { bridge.consoleLog('[' + level + '] ' + format(arguments)) } catch (e) {}
+        }
+      }
+      return { log: emit('log'), warn: emit('warn'), error: emit('error'),
+               info: emit('info'), debug: emit('debug'), trace: emit('trace') }
+    })()
+
     globalThis.lx = (function() {
       var bridge = globalThis.__lxBridge
       var EVENT_NAMES = { request: 'request', inited: 'inited', updateAlert: 'updateAlert' }
@@ -622,13 +670,27 @@ final class LuoxueSettlementBox: @unchecked Sendable {
         guard !settled else { return }
         settled = true
         if let urlString = Self.urlString(from: value),
-           let url = URL(string: urlString),
+           let url = Self.makeURL(from: urlString),
            url.scheme == "http" || url.scheme == "https" {
             finish?(.success(url))
         } else {
             let raw = value.isString ? (value.toString() ?? "") : "non-string result"
             finish?(.failure(LuoxueScriptError.invalidURL(raw)))
         }
+    }
+
+    /// 网盘-style resolvers often return links with raw spaces or unencoded
+    /// characters, which `URL(string:)` refuses outright. Percent-encode just
+    /// the characters that are illegal anywhere in a URL and try again.
+    private static func makeURL(from string: String) -> URL? {
+        if let url = URL(string: string) { return url }
+        let allowed = CharacterSet.urlHostAllowed
+            .union(.urlPathAllowed)
+            .union(.urlQueryAllowed)
+            .union(.urlFragmentAllowed)
+        guard let encoded = string.addingPercentEncoding(withAllowedCharacters: allowed),
+              let url = URL(string: encoded) else { return nil }
+        return url
     }
 
     func fail(_ error: any Error) {

@@ -518,18 +518,21 @@ final class LuoxueSourceManager: ObservableObject {
     // MARK: - Quality mapping
 
     /// Maps the app's playback quality onto the quality tokens LX Music
-    /// scripts use, falling back to whatever the script supports.
+    /// scripts use, falling back to whatever the script supports. The leading
+    /// `atmos` / `master` entries are tokens some resolvers add beyond the
+    /// standard LX set — scripts that do not declare them skip to the next
+    /// candidate, so the order is safe everywhere.
     static func lxQuality(for quality: AudioQuality, supported: [String]?) -> String {
         let preference: [AudioQuality: [String]] = [
             .standard: ["128k"],
             .higher: ["192k", "320k", "128k"],
             .exhigh: ["320k", "128k"],
             .lossless: ["flac", "320k", "128k"],
-            .hires: ["flac24bit", "flac", "320k", "128k"],
+            .hires: ["hires", "flac24bit", "flac", "320k", "128k"],
             .jyeffect: ["flac24bit", "flac", "320k", "128k"],
-            .vivid: ["flac24bit", "flac", "320k", "128k"],
-            .sky: ["flac24bit", "flac", "320k", "128k"],
-            .jymaster: ["flac24bit", "flac", "320k", "128k"],
+            .vivid: ["atmos", "flac24bit", "flac", "320k", "128k"],
+            .sky: ["atmos", "flac24bit", "flac", "320k", "128k"],
+            .jymaster: ["master", "flac24bit", "flac", "320k", "128k"],
         ]
         let order = preference[quality] ?? ["320k", "128k"]
         guard let supported, !supported.isEmpty else { return order.first ?? "128k" }
