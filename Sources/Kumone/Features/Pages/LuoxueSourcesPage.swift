@@ -181,7 +181,7 @@ struct LuoxueSourcesPage: View {
                     .foregroundStyle(.tertiary)
 
                 // Build marker: lets the user confirm which build is running.
-                Text("当前构建：2026-11-10.9（脚本加载修复版）")
+                Text("当前构建：2026-11-10.10（源引擎兼容层：UA伪装+混合响应体+CommonJS插件+音质降级）")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
 

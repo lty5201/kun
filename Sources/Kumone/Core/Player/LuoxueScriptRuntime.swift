@@ -342,6 +342,10 @@ final class LuoxueScriptRuntime {
                     finish(.failure(LuoxueScriptError.scriptThrew(failure)))
                     return
                 }
+                // CommonJS-style plugins are adapted onto the LX protocol
+                // after the script body ran and had a chance to fill
+                // module.exports.
+                context.evaluateScript(Self.commonJSAdapterSource)
 
                 // Give asynchronously-initializing scripts a grace period
                 // before declaring the script dead. Many sources run a
@@ -485,6 +489,15 @@ final class LuoxueScriptRuntime {
               let url = URL(string: urlString) else { return nil }
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
+        // Present as the official LX Music mobile client: many source APIs
+        // whitelist (or at least don't block) its user agent.
+        if request.value(forHTTPHeaderField: "User-Agent") == nil {
+            request.setValue(
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                    + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                    + "lx-music-mobile/2.12.0 Mobile Safari/605.1.15",
+                forHTTPHeaderField: "User-Agent")
+        }
 
         if optionsValue.isObject, let options = optionsValue.toObject() as? [String: Any] {
             if let method = options["method"] as? String, !method.isEmpty {
@@ -532,19 +545,10 @@ final class LuoxueScriptRuntime {
                 headers[String(describing: name).lowercased()] = String(describing: value)
             }
 
-            var body: Any = ""
-            if let data, !data.isEmpty {
-                let contentType = headers["content-type"] ?? ""
-                let asString = String(data: data, encoding: .utf8) ?? ""
-                let looksLikeJSON = contentType.contains("json")
-                    || asString.hasPrefix("{") || asString.hasPrefix("[")
-                if looksLikeJSON,
-                   let parsed = try? JSONSerialization.jsonObject(with: data) {
-                    body = parsed
-                } else {
-                    body = asString
-                }
-            }
+            // Body is always the raw string: the JS shim wraps it into a
+            // hybrid String that also exposes the parsed JSON (.json/.text),
+            // which is what LX scripts expect either way.
+            let body: Any = (data.flatMap { String(data: $0, encoding: .utf8) }) ?? ""
             completion(.success([
                 "statusCode": httpResponse.statusCode,
                 "headers": headers,
@@ -679,6 +683,121 @@ final class LuoxueScriptRuntime {
           )
         },
       }
+    })()
+
+    // --- Compatibility layer (modeled on the reference implementations) ---
+
+    // Some scripts address the global object as `window`.
+    globalThis.window = globalThis
+    globalThis.window.lx = globalThis.lx
+
+    // JavaScriptCore has no atob/btoa.
+    if (typeof globalThis.atob !== 'function') {
+      globalThis.atob = function(str) {
+        var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
+        var output = ''
+        str = String(str).replace(/=+$/, '')
+        for (var bc = 0, bs = 0, buffer, i = 0;
+             buffer = str.charAt(i++);
+             ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4)
+               ? output += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
+          buffer = chars.indexOf(buffer)
+        }
+        return output
+      }
+    }
+    if (typeof globalThis.btoa !== 'function') {
+      globalThis.btoa = function(str) {
+        var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
+        var output = ''
+        for (var block, charCode, idx = 0, map = chars;
+             str.charAt(idx | 0) || (map = '=', idx % 1);
+             output += map.charAt(63 & block >> 8 - idx % 1 * 8)) {
+          charCode = str.charCodeAt(idx |= 0)
+          block = idx % 3 ? block * 256 + charCode : charCode
+        }
+        return output
+      }
+    }
+
+    // JSON-looking string response bodies become hybrid String objects that
+    // also expose the parsed value (.json/.text/.data/.raw): scripts that
+    // call JSON.parse(body) and scripts that read body.code both work.
+    globalThis.__lxNativeRequest = globalThis.lx.request
+    globalThis.lx.request = function(url, options, callback) {
+      return globalThis.__lxNativeRequest(url, options || {}, function(err, resp) {
+        try {
+          if (!err && resp && typeof resp === 'object' && typeof resp.body === 'string') {
+            var raw = resp.body
+            var first = raw.replace(/^\\s+/, '').charAt(0)
+            if (first === '{' || first === '[') {
+              try {
+                var parsed = JSON.parse(raw)
+                if (parsed && typeof parsed === 'object') {
+                  var hybrid = new String(raw)
+                  Object.assign(hybrid, parsed)
+                  hybrid.raw = raw
+                  hybrid.text = raw
+                  resp.body = hybrid
+                  if (resp.text == null) resp.text = raw
+                  if (resp.json == null) resp.json = parsed
+                  if (resp.data == null) resp.data = parsed
+                }
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
+        callback(err, resp)
+      })
+    }
+
+    // CommonJS module globals, for plugin scripts written as
+    // `module.exports = { sources, musicUrl }` instead of the LX protocol.
+    globalThis.module = globalThis.module || { exports: {} }
+    globalThis.exports = globalThis.module.exports
+    """
+}
+
+/// Evaluated AFTER the user script: adapts CommonJS-style plugins
+/// (`module.exports.musicUrl` + `.sources`) onto the LX protocol so they
+/// behave like ordinary custom sources.
+private extension LuoxueScriptRuntime {
+    static let commonJSAdapterSource = """
+    (function() {
+      try {
+        var exp = globalThis.module && globalThis.module.exports
+        if (!exp || typeof exp.musicUrl !== 'function' || !exp.sources) return
+
+        var pluginInfo = exp.pluginInfo || {}
+        var sources = exp.sources || {}
+        var mapped = {}
+
+        for (var id of Object.keys(sources)) {
+          var s = sources[id]
+          if (!s || typeof s !== 'object') continue
+          var q = Array.isArray(s.qualitys) ? s.qualitys : []
+          mapped[id] = {
+            name: (pluginInfo.name ? (pluginInfo.name + ' - ') : '') + (s.name || id),
+            type: 'music',
+            actions: ['musicUrl'],
+            qualitys: q,
+          }
+        }
+
+        if (Object.keys(mapped).length) {
+          globalThis.lx.send('inited', { sources: mapped })
+          globalThis.lx.on('request', function(payload) {
+            if (!payload || payload.action !== 'musicUrl') return
+            var quality = payload.info && payload.info.type
+            var musicInfo = (payload.info && payload.info.musicInfo) || {}
+            return Promise.resolve(exp.musicUrl(payload.source, musicInfo, quality)).then(function(res) {
+              if (typeof res === 'string') return res
+              if (res && typeof res.url === 'string') return res.url
+              return ''
+            })
+          })
+        }
+      } catch (e) {}
     })()
     """
 }

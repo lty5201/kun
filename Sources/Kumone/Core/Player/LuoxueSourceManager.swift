@@ -581,21 +581,31 @@ final class LuoxueSourceManager: ObservableObject {
         for entry in entries where entry.enabled {
             guard let runtime = runtimes[entry.id] else { continue }
             let allCapabilities = await runtime.capabilities()
-            let quality = Self.lxQuality(
+            let candidates = Self.lxQualityCandidates(
                 for: qualityPreference,
                 supported: allCapabilities["wy"]?.qualitys)
-            do {
-                let url = try await runtime.resolveMusicURL(source: "wy", songID: track.id, quality: quality)
-                return ResolvedAudioSource(
-                    id: .luoxue,
-                    displayName: AudioSourceID.luoxue.displayName,
-                    url: url)
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                Self.log.error("source=\(entry.name, privacy: .public) resolve failed: \(error.localizedDescription, privacy: .public)")
-                failures.append("\(entry.name)：\(error.localizedDescription)")
-                continue
+            // Try the preferred quality first; if the source rejects it,
+            // downgrade through the remaining candidates (e.g. 320k -> 128k)
+            // before giving up on this source — the same fallback the
+            // reference apps use for VIP-gated tracks.
+            var sourceFailures: [String] = []
+            for quality in candidates {
+                do {
+                    let url = try await runtime.resolveMusicURL(source: "wy", songID: track.id, quality: quality)
+                    return ResolvedAudioSource(
+                        id: .luoxue,
+                        displayName: AudioSourceID.luoxue.displayName,
+                        url: url)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    Self.log.error("source=\(entry.name, privacy: .public) quality=\(quality, privacy: .public) resolve failed: \(error.localizedDescription, privacy: .public)")
+                    sourceFailures.append("\(quality)：\(error.localizedDescription)")
+                    continue
+                }
+            }
+            if let first = sourceFailures.first {
+                failures.append("\(entry.name)：\(first)")
             }
         }
         throw AggregateResolveError(failures: failures)
@@ -626,6 +636,28 @@ final class LuoxueSourceManager: ObservableObject {
             return candidate
         }
         return supported.first ?? "128k"
+    }
+
+    /// All quality candidates to try, best first — supports the
+    /// retry-with-lower-quality fallback for VIP-gated tracks.
+    static func lxQualityCandidates(for quality: AudioQuality, supported: [String]?) -> [String] {
+        let preference: [AudioQuality: [String]] = [
+            .standard: ["128k"],
+            .higher: ["192k", "320k", "128k"],
+            .exhigh: ["320k", "128k"],
+            .lossless: ["flac", "320k", "128k"],
+            .hires: ["hires", "flac24bit", "flac", "320k", "128k"],
+            .jyeffect: ["flac24bit", "flac", "320k", "128k"],
+            .vivid: ["atmos", "flac24bit", "flac", "320k", "128k"],
+            .sky: ["atmos", "flac24bit", "flac", "320k", "128k"],
+            .jymaster: ["master", "flac24bit", "flac", "320k", "128k"],
+        ]
+        let order = preference[quality] ?? ["320k", "128k"]
+        guard let supported, !supported.isEmpty else { return order }
+        let filtered = order.filter { supported.contains($0) }
+        // Fall back to whatever the source does support so the candidate
+        // list is never empty.
+        return filtered.isEmpty ? [supported[0]] : filtered
     }
 
     private static func environmentName() -> String {
