@@ -300,6 +300,31 @@ struct ToplistTrackPreview: Codable, Hashable {
     let second: String
 }
 
+// MARK: - Lyrics
+
+struct LyricResponse: Codable {
+    struct LyricBody: Codable {
+        let lyric: String?
+    }
+
+    let lrc: LyricBody?
+    let tlyric: LyricBody?
+    let romalrc: LyricBody?
+    /// Verbatim (word-by-word) lyrics for karaoke highlighting; only present
+    /// on the `/song/lyric/v1` endpoint and only for songs that have them.
+    let yrc: LyricBody?
+    let ytlrc: LyricBody?
+    let yromalrc: LyricBody?
+    let lyricUser: LyricContributor?
+    let transUser: LyricContributor?
+    let nolyric: Bool?
+    let uncollected: Bool?
+}
+
+struct LyricContributor: Codable {
+    let nickname: String?
+}
+
 // MARK: - Song URL
 
 struct SongURLData: Decodable, Hashable {

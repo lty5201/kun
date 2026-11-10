@@ -58,10 +58,10 @@ enum LyricsSidecar {
         }
     }
 
-    /// Resolve and persist in one go — the prefetch pipeline has a local file
-    /// but may never have asked for the words (only the *playing* track's
-    /// lyrics are loaded). One resolve per prefetched track.
-    static func fetchAndWrite(track: Track, for audio: URL) async {
+    /// Fetch and persist in one go — the prefetch pipeline has a local file but
+    /// has never asked for the words (only the *playing* track's lyrics are
+    /// loaded). One small JSON call per prefetched track.
+    static func fetchAndWrite(trackID: Int, for audio: URL) async {
         // A sidecar already on disk is this track's words from a previous
         // session — skip the network round-trip rather than re-fetching the
         // same body every prefetch. (Lyrics for a published track are as good
@@ -69,10 +69,9 @@ enum LyricsSidecar {
         // re-cached.)
         guard !Task.isCancelled, !FileManager.default.fileExists(
             atPath: Audition.Lyrics.sidecarURL(for: audio).path) else { return }
-        guard let resolved = await FlutifyLyricsService.shared.resolveOriginalLyrics(track: track),
-              let lrc = resolved.rawLRC else { return }
+        guard let response = try? await MusicAPI.lyric(id: trackID) else { return }
         guard !Task.isCancelled else { return }
-        write(lrc, for: audio)
+        write(response.lrc?.lyric, for: audio)
     }
 }
 #endif

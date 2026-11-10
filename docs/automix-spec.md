@@ -69,7 +69,7 @@ final class PlaybackEngine {          // 内部专用串行队列，非 MainActo
 ### AudioCache
 
 - 目录：`~/Library/Caches/Kumone/Audio/`（可被系统清理，符合"缓存"语义）。
-- Key：`trackID + servedLevel + 来源标识（官方源 / unblock:源名）`。**不缓存 URL**（官方直链有时效），每次未命中都重新 resolve 后立刻下载。
+- Key：`trackID + servedLevel + 音源标识（官方源 / unblock:源名）`。**不缓存 URL**（官方直链有时效），每次未命中都重新 resolve 后立刻下载。
 - 写入：`.part` 临时文件 → 完成后原子 rename；同 key 并发请求合并为一次下载。
 - LRU：按 mtime 淘汰，上限默认 2 GB，设置页可调（512 MB / 2 GB / 8 GB / 不限）。
 - Sidecar：`<key>.lrc` 存逐行歌词（`Audition.Lyrics` 读），随音频一起淘汰。分析结果**不再**放这里，见下。

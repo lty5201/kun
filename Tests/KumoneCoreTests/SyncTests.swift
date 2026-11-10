@@ -61,8 +61,13 @@ struct SyncTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = SettingsManager.shared
         let originalTranslation = settings.showLyricsTranslation
-        defer { settings.showLyricsTranslation = originalTranslation }
+        let originalVerbatim = settings.verbatimLyrics
+        defer {
+            settings.showLyricsTranslation = originalTranslation
+            settings.verbatimLyrics = originalVerbatim
+        }
         settings.showLyricsTranslation = false
+        settings.verbatimLyrics = false
         let device = UUID()
         let remote = UUID()
         let connection = UUID()
@@ -70,14 +75,14 @@ struct SyncTests {
         _ = try await repository.connect(to: root, connectionID: connection)
         let incoming = SyncedPreferences(fields: [
             SettingsManager.Keys.showTranslation: .init(value: .boolean(true), revision: .init(counter: 100, deviceID: remote)),
-            SettingsManager.Keys.annotation: .init(value: .string("romaji"), revision: .init(counter: 101, deviceID: remote))
+            SettingsManager.Keys.verbatimLyrics: .init(value: .boolean(true), revision: .init(counter: 101, deviceID: remote))
         ])
         try await repository.write(SyncRecord(revision: .init(counter: 102, deviceID: remote), deviceName: "Remote", payload: incoming),
                                    domain: .preferences, connectionID: connection)
         let initialPreferencesSync = PreferencesSync(defaults: defaults, settings: settings)
         let clock = SyncRevisionClock(defaults: defaults, deviceID: device, deviceName: "Local")
         try await initialPreferencesSync.synchronize(reading: true, repository: repository, connectionID: connection, clock: clock)
-        #expect(settings.showLyricsTranslation)
+        #expect(settings.showLyricsTranslation && settings.verbatimLyrics)
         let localPreferencesFile = root.appendingPathComponent("Kumone/Devices/\(device.uuidString)/preferences.json")
         let publishedData = try Data(contentsOf: localPreferencesFile)
         defaults.writeCountsByKey.withLock { $0.removeAll() }
@@ -89,6 +94,7 @@ struct SyncTests {
         #expect(defaults.writeCountsByKey.withLock { $0.isEmpty })
 
         settings.showLyricsTranslation = false
+        settings.verbatimLyrics = false
         try await restoredPreferencesSync.synchronize(reading: false, repository: repository, connectionID: connection, clock: nextClock)
         #expect(defaults.writeCountsByKey.withLock { $0["sync.preferences"] } == 1)
         #expect(defaults.writeCountsByKey.withLock { $0["sync.counter"] } == 2)
@@ -108,7 +114,7 @@ struct SyncTests {
         let records = try await repository.read(.preferences, as: SyncedPreferences.self, connectionID: connection)
         let localRecord = try #require(records.first { $0.id == device })
         #expect(localRecord.payload?.fields[SettingsManager.Keys.showTranslation]?.value == .boolean(true))
-        #expect(localRecord.payload?.fields[SettingsManager.Keys.annotation]?.value == .string("romaji"))
+        #expect(localRecord.payload?.fields[SettingsManager.Keys.verbatimLyrics]?.value == .boolean(false))
         await repository.disconnect(connectionID: connection)
     }
     @Test(arguments: ["invalid-bookmark", "deleted-folder", "invalid-manifest"])

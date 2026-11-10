@@ -45,7 +45,7 @@ SwiftUI 编写 · 无第三方服务器 · Sparkle 自动更新
 - 🧭 **精选** — 分类歌单（精品 / 官方 / 排行榜 / 场景分类）无限滚动
 - 🎵 **播放** — AVPlayer 引擎，标准 ~ Hi-Res 音质可选（黑胶 VIP 可播无损，自动回落），随机 / 单曲循环 / 列表循环，下一首播放队列，灰色歌曲识别
 - 🚗 **CarPlay（iOS，按需开启）** — Now Playing、分类音乐库、播放队列与搜索模板已写入二进制；激活需 [Apple 授权的 CarPlay 音频能力](https://developer.apple.com/contact/carplay/)，大多数账号不会被授予。默认关闭以保证开源源码树可直接编译，详见下方[启用 CarPlay](#启用-carplayios)
-- 🔓 **灰色歌曲解锁** — 通过在设置中选择的落雪（LX Music）自定义源脚本解析播放地址，无版权或试听歌曲自动匹配；脚本仅在本机运行，不内置任何源
+- 🔓 **灰色歌曲解锁** — 原生实现常见解锁音源（pyncmd / 酷我 / 酷狗），无版权或试听歌曲自动匹配第三方音源
 - 🖼 **沉浸播放页** — 封面取色渐变背景 + 大封面 + 大字同步歌词（点击播放条封面进入，Esc 退出）
 - 📻 **私人漫游** — 沉浸式 FM 页面，不喜欢 / 切歌
 - 📝 **歌词** — 侧边玻璃面板，逐行同步 + 翻译，点击跳转
@@ -142,9 +142,9 @@ Kumone 是从零编写的 Swift 实现，未复制以下项目的代码，但深
 
 - [YesPlayMusic](https://github.com/qier222/YesPlayMusic)（MIT，© qier222）— 功能设计，以及参考其 API 设计规范
 - [kaset](https://github.com/sozercan/kaset)（MIT，© sozercan）— UI 设计系统、动效与 SwiftPM 打包方案的参考
-- [lx-music-source](https://github.com/lyswhut/lx-music-source) 及落雪自定义源脚本生态 — 本项目落雪接入所遵循的用户脚本 API 规范（`LuoxueScriptRuntime.swift` 为独立的 Swift 实现）
+- 开源灰色歌曲解锁服务项目（LGPL-3.0-only）— 参考其 API 设计规范与音源匹配策略（`UnblockService.swift` 为独立的 Swift 重新实现）
 - [LyricsX](https://github.com/ddddxxx/LyricsX)（MPL-2.0，© ddddxxx）— 桌面歌词窗口的设计参考（窗口配置、屏幕比例定位；`DesktopLyrics.swift` 为独立的 SwiftUI 实现）
 
 ## 协议与说明
 
-本项目以 [LGPL-3.0-only](LICENSE) 协议开源（随附 [GPL-3.0](COPYING) 文本）。仅供学习交流，音乐数据与版权归各自权利人及各平台所有。不支持下载、无社交功能。
+本项目以 [LGPL-3.0-only](LICENSE) 协议开源（随附 [GPL-3.0](COPYING) 文本）。仅供学习交流，音乐数据与版权归各自权利人及音源平台所有。不支持下载、无社交功能。

@@ -190,7 +190,7 @@ private struct DesktopLyricsBox: View {
     /// visibility — desktop lyrics are mostly read while that window is away.
     @ViewBuilder
     private func mainText(for line: LyricLine) -> some View {
-        if let words = line.words, !words.isEmpty {
+        if settings.verbatimLyrics, let words = line.words, !words.isEmpty {
             TimelineView(.animation(minimumInterval: 1 / 30, paused: !player.isPlaying)) { _ in
                 LyricText(
                     line: line,

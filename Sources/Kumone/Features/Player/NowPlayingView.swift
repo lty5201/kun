@@ -208,7 +208,7 @@ struct NowPlayingView: View {
         activeIndex = index
         guard let index else { return }
         DispatchQueue.main.async {
-            proxy.scrollTo(index, anchor: lyricsFocusAnchor)
+            proxy.scrollTo(index, anchor: .center)
         }
     }
 
@@ -1238,24 +1238,10 @@ struct NowPlayingView: View {
         lyricsScroll(topInset: 200, bottomInset: 240, horizontalPadding: 24)
     }
 
-    /// Flutify's `lyricsFocusPosition` translated into a `scrollTo` anchor:
-    /// 0.5 is `.center`, smaller values pin the active line higher up, larger
-    /// values pin it lower down. Clamped to keep some margin at either edge.
-    private var lyricsFocusAnchor: UnitPoint {
-        let raw = min(max(settings.lyricsFocusPosition, 0.05), 0.95)
-        return UnitPoint(x: 0.5, y: raw)
-    }
-
     /// The scrolling lyric list shared by the regular page and the
     /// landscape immersive page. Insets are the space parked above and below
     /// the lines so the active one can sit mid-viewport; the short landscape
     /// page needs them much smaller than a full-height window does.
-    ///
-    /// Flutify settings applied here:
-    /// - `lyricsScale` scales the big lines (and their translations).
-    /// - `lyricsAlign` centers the column when set to `center`.
-    /// - `lyricsFocusPosition` drives the scroll anchor: 0.5 is centre,
-    ///   smaller pins the active line higher, larger lower.
     @ViewBuilder
     private func lyricsScroll(
         topInset: CGFloat,
@@ -1266,10 +1252,8 @@ struct NowPlayingView: View {
         if let lyrics = player.lyrics, !lyrics.isEmpty {
             ScrollViewReader { proxy in
                 ScrollView(showsIndicators: false) {
-                    LazyVStack(
-                        alignment: settings.lyricsAlign == .center ? .center : (karaoke ? .center : .leading),
-                        spacing: karaoke ? 20 : 26
-                    ) {
+                    LazyVStack(alignment: karaoke ? .center : .leading,
+                               spacing: karaoke ? 20 : 26) {
                         Color.clear.frame(height: topInset)
                         ForEach(lyrics.lines) { line in
                             Group {
@@ -1308,7 +1292,7 @@ struct NowPlayingView: View {
                     activeIndex = index
                     guard !isUserScrolling, let index else { return }
                     withAnimation(.spring(response: 0.8, dampingFraction: 0.85)) {
-                        proxy.scrollTo(index, anchor: lyricsFocusAnchor)
+                        proxy.scrollTo(index, anchor: .center)
                     }
                 }
                 .onAppear {
@@ -1344,32 +1328,25 @@ struct NowPlayingView: View {
         Button {
             player.seek(to: line.time)
         } label: {
-            VStack(
-                alignment: settings.lyricsAlign == .center ? .center : .leading,
-                spacing: 5
-            ) {
+            VStack(alignment: .leading, spacing: 5) {
                 if settings.lyricsAnnotation == .romaji, let romaji = line.romaji {
                     Text(romaji)
-                        .font(.system(size: (isActive ? 15 : 13) * settings.lyricsScale, weight: .medium))
+                        .font(.system(size: isActive ? 15 : 13, weight: .medium))
                         .foregroundStyle(.white.opacity(isActive ? 0.7 : 0.35))
                 }
                 LyricMainText(
                     line: line, isActive: isActive,
-                    size: (isActive ? 26 : 20) * settings.lyricsScale,
-                    weight: isActive ? .bold : .semibold,
-                    verbatim: true
+                    size: isActive ? 26 : 20, weight: isActive ? .bold : .semibold,
+                    verbatim: settings.verbatimLyrics
                 )
                 if settings.showLyricsTranslation, let translation = line.translation {
                     Text(translation)
-                        .font(.system(size: (isActive ? 16 : 14) * settings.lyricsScale, weight: .medium))
+                        .font(.system(size: isActive ? 16 : 14, weight: .medium))
                         .foregroundStyle(.white.opacity(isActive ? 0.7 : 0.35))
                 }
             }
-            .multilineTextAlignment(settings.lyricsAlign == .center ? .center : .leading)
-            .frame(
-                maxWidth: .infinity,
-                alignment: settings.lyricsAlign == .center ? .center : .leading
-            )
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .blur(radius: isActive || isUserScrolling ? 0 : 0.6)
             .scaleEffect(isActive ? 1.02 : 1, anchor: .leading)
@@ -1396,7 +1373,7 @@ struct NowPlayingView: View {
                     line: line, isActive: isActive,
                     size: isActive ? 32 : 21,
                     weight: isActive ? .bold : .medium,
-                    verbatim: true,
+                    verbatim: settings.verbatimLyrics,
                     alignment: .center
                 )
                 if settings.showLyricsTranslation, let translation = line.translation {
@@ -1587,16 +1564,9 @@ private struct IOSImmersiveLyricsColumn: View {
         guard let index else { return }
         DispatchQueue.main.async {
             withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                proxy.scrollTo(index, anchor: lyricsFocusAnchor)
+                proxy.scrollTo(index, anchor: .center)
             }
         }
-    }
-
-    /// Flutify's `lyricsFocusPosition` as a `scrollTo` anchor, same as the
-    /// desktop lyrics column.
-    private var lyricsFocusAnchor: UnitPoint {
-        let raw = min(max(settings.lyricsFocusPosition, 0.05), 0.95)
-        return UnitPoint(x: 0.5, y: raw)
     }
 
     private var edgeMask: some View {
@@ -1616,35 +1586,29 @@ private struct IOSImmersiveLyricsColumn: View {
         Button {
             player.seek(to: line.time)
         } label: {
-            VStack(
-                alignment: settings.lyricsAlign == .center ? .center : .leading,
-                spacing: 5
-            ) {
+            VStack(alignment: .leading, spacing: 5) {
                 if settings.lyricsAnnotation == .romaji, let romaji = line.romaji {
                     Text(romaji)
-                        .font(.system(size: (isActive ? 15 : 13) * settings.lyricsScale, weight: .medium))
+                        .font(.system(size: isActive ? 15 : 13, weight: .medium))
                         .foregroundStyle(.white.opacity(isActive ? 0.75 : 0.4))
                 }
 
                 LyricMainText(
                     line: line,
                     isActive: isActive,
-                    size: (isActive ? 26 : 21) * settings.lyricsScale,
+                    size: isActive ? 26 : 21,
                     weight: isActive ? .bold : .semibold,
-                    verbatim: true
+                    verbatim: settings.verbatimLyrics
                 )
 
                 if settings.showLyricsTranslation, let translation = line.translation {
                     Text(translation)
-                        .font(.system(size: (isActive ? 16 : 14) * settings.lyricsScale, weight: .medium))
+                        .font(.system(size: isActive ? 16 : 14, weight: .medium))
                         .foregroundStyle(.white.opacity(isActive ? 0.75 : 0.4))
                 }
             }
-            .multilineTextAlignment(settings.lyricsAlign == .center ? .center : .leading)
-            .frame(
-                maxWidth: .infinity,
-                alignment: settings.lyricsAlign == .center ? .center : .leading
-            )
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .blur(radius: isActive || isUserScrolling ? 0 : 0.4)
             .scaleEffect(isActive ? 1.02 : 1.0, anchor: .leading)
@@ -1692,9 +1656,7 @@ private struct ImmersiveArtworkFramePreferenceKey: PreferenceKey {
 private struct CompactTrackHeader: View {
     @EnvironmentObject private var player: PlayerService
     @EnvironmentObject private var account: AccountStore
-    @EnvironmentObject private var settings: SettingsManager
     @State private var showAddToPlaylist = false
-    @State private var showingQualitySheet = false
 
     let showsExpandedArtwork: Bool
     let onOpenDestination: (Destination) -> Void
@@ -1734,30 +1696,6 @@ private struct CompactTrackHeader: View {
                         color: .white.opacity(0.62),
                         onOpenDestination: onOpenDestination
                     )
-                }
-                // 当前歌曲音质：tap to open the quality sheet, like the
-                // official app's badge under the song info.
-                Button {
-                    showingQualitySheet = true
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 9))
-                        Text(currentQualityBadge)
-                            .font(.system(size: 10, weight: .semibold))
-                    }
-                    .foregroundStyle(.white.opacity(0.7))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2.5)
-                    .background(.white.opacity(0.14), in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text("当前歌曲音质"))
-                .sheet(isPresented: $showingQualitySheet) {
-                    AudioQualitySheet()
-                        .environmentObject(player)
-                        .environmentObject(settings)
-                        .tint(Theme.accent)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1834,15 +1772,6 @@ private struct CompactTrackHeader: View {
                 AddToPlaylistSheet(track: track)
             }
         }
-    }
-
-    /// What the small quality capsule under the song info reads: the level
-    /// actually being served when there is one, else the preference.
-    private var currentQualityBadge: String {
-        if let level = player.servedQuality, let served = AudioQuality(rawValue: level) {
-            return served.badge
-        }
-        return settings.audioQuality.badge
     }
 }
 
@@ -2481,7 +2410,7 @@ private struct IOSMinimalLyricsColumn: View {
                 LyricMainText(
                     line: line, isActive: isActive,
                     size: 17, weight: .bold,
-                    verbatim: true
+                    verbatim: settings.verbatimLyrics
                 )
                     .fixedSize(horizontal: false, vertical: true)
                     .scaleEffect(isActive ? 1.02 : 16.0 / 17.0, anchor: .leading)

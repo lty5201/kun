@@ -30,46 +30,6 @@
     <true/>
     <key>LSSupportsOpeningDocumentsInPlace</key>
     <true/>
-    <!-- Register as a handler for .js files so a Luoxue source script can be
-         imported from the Files app via 长按 → 分享 → 零音乐 (Open In). This is
-         the fallback import path that does not depend on the in-app document
-         picker at all. -->
-    <key>CFBundleDocumentTypes</key>
-    <array>
-        <dict>
-            <key>CFBundleTypeName</key>
-            <string>JavaScript 音源脚本</string>
-            <key>CFBundleTypeRole</key>
-            <string>Viewer</string>
-            <key>LSHandlerRank</key>
-            <string>Alternate</string>
-            <key>LSItemContentTypes</key>
-            <array>
-                <string>sb.moe.kumone.javascript-source</string>
-            </array>
-        </dict>
-    </array>
-    <key>UTImportedTypeDeclarations</key>
-    <array>
-        <dict>
-            <key>UTTypeIdentifier</key>
-            <string>sb.moe.kumone.javascript-source</string>
-            <key>UTTypeDescription</key>
-            <string>JavaScript 音源脚本</string>
-            <key>UTTypeConformsTo</key>
-            <array>
-                <string>public.data</string>
-                <string>public.text</string>
-            </array>
-            <key>UTTypeTagSpecification</key>
-            <dict>
-                <key>public.filename-extension</key>
-                <array>
-                    <string>js</string>
-                </array>
-            </dict>
-        </dict>
-    </array>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>

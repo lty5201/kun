@@ -188,9 +188,6 @@ final class PlayerService: ObservableObject {
     private var consecutiveFailures = 0
     private var attemptedUnblockSources: Set<AudioSourceID> = []
     private var currentUnblockSourceID: AudioSourceID?
-    /// Why the last custom-source resolution failed, so the unplayable toast
-    /// can say more than just "VIP 专属".
-    private var lastUnblockFailure: String?
     /// The resolve generation that already spent its one reload after a
     /// failed item, so a reload that fails too gives up instead of looping.
     private var itemRetryGeneration: Int?
@@ -381,22 +378,6 @@ final class PlayerService: ObservableObject {
         } else {
             play(tracks: [track], source: .none)
         }
-    }
-
-    /// Re-resolves the current track at the newly picked quality and resumes
-    /// from the same position — the quality sheet takes effect on the song
-    /// that is playing right now, like the official app, instead of only on
-    /// the next one. Skipped when nothing streams (local copy / stopped /
-    /// already serving that level), where the preference alone is enough.
-    func applyQualityChangeIfPlaying() {
-        guard isPlaying, let track = currentTrack else { return }
-        guard offlinePlaybackLease == nil else { return }
-        // A custom-source stream is not quality-switchable (the script picks
-        // its own format), and re-resolving it would just reload for nothing.
-        if unblockSource != nil, servedQuality == nil { return }
-        let wanted = SettingsManager.shared.audioQuality.rawValue
-        if let served = servedQuality, served == wanted { return }
-        startPlaying(track, resumeAt: progress)
     }
 
     /// Insert a track right after the current one.
@@ -847,9 +828,7 @@ final class PlayerService: ObservableObject {
         }
 
         // The service refused — try third-party sources (unblock-style).
-        var unblockAttempted = false
         if resolvedURL == nil || data?.freeTrialInfo != nil, allowsUnblock {
-            unblockAttempted = true
             if await resolveAndLoadUnblocked(track, generation: generation, resumeAt: resumeAt) { return }
         }
         guard generation == resolveGeneration else { return }
@@ -870,16 +849,7 @@ final class PlayerService: ObservableObject {
         servedQuality = data?.level
         if data?.freeTrialInfo != nil {
             isTrial = true
-            // Say WHY only a trial clip plays, instead of a generic banner:
-            // the fix (importing a working source) is then obvious.
-            if unblockAttempted {
-                // resolveAndLoadUnblocked already toasted the per-source
-                // failure reason.
-            } else if !SettingsManager.shared.enableUnblock {
-                ToastCenter.shared.show(String(localized: "VIP 试听片段（设置里的“灰色歌曲解锁”已关闭）"))
-            } else {
-                ToastCenter.shared.show(String(localized: "VIP 试听片段（未安装可用的自定义源，导入后可播放完整版）"))
-            }
+            ToastCenter.shared.show(String(localized: "VIP 歌曲，当前为试听片段"))
         }
         _ = await loadResolvedURL(track, url: url, durationMS: data?.time, generation: generation, resumeAt: resumeAt)
     }
@@ -890,7 +860,8 @@ final class PlayerService: ObservableObject {
         requiresActivePlayback: Bool = false,
         resumeAt: TimeInterval = 0
     ) async -> Bool {
-        guard SettingsManager.shared.canResolveUnblockedTracks else { return false }
+        let enabledSources = SettingsManager.shared.enabledAudioSourceIDs
+        guard !enabledSources.isEmpty else { return false }
 
         guard generation == resolveGeneration,
               !requiresActivePlayback || isPlaying
@@ -898,23 +869,15 @@ final class PlayerService: ObservableObject {
 
         let resolution = await UnblockService.resolve(
             track,
+            enabledSources: enabledSources,
             excluding: attemptedUnblockSources
         )
         attemptedUnblockSources.formUnion(resolution.attemptedSources)
-        guard let unblocked = resolution.source else {
-            // Surface why every source failed — a silent fallback to the
-            // trial clip hides broken scripts and looks like "VIP can't play".
-            lastUnblockFailure = resolution.failureReason
-            if let reason = resolution.failureReason {
-                ToastCenter.shared.show(String(localized: "自定义源解析失败：\(reason)"))
-            }
-            return false
-        }
+        guard let unblocked = resolution.source else { return false }
         guard generation == resolveGeneration,
               !requiresActivePlayback || isPlaying
         else { return false }
 
-        lastUnblockFailure = nil
         currentUnblockSourceID = unblocked.id
         unblockSource = unblocked.displayName
         servedQuality = nil
@@ -925,12 +888,11 @@ final class PlayerService: ObservableObject {
             url: unblocked.url,
             durationMS: nil,
             generation: generation,
-            resumeAt: resumeAt,
-            headers: unblocked.headers
+            resumeAt: resumeAt
         )
         guard case .loaded = loadResult else { return false }
 
-        ToastCenter.shared.show(String(localized: "已使用自定义源：\(unblocked.displayName)"))
+        ToastCenter.shared.show(String(localized: "已使用第三方音源：\(unblocked.displayName)"))
         return true
     }
 
@@ -939,8 +901,7 @@ final class PlayerService: ObservableObject {
         let reason = track.playability(privilege: nil,
                                        isLoggedIn: AccountStore.shared.isLoggedIn,
                                        vipType: AccountStore.shared.vipType).reason
-        let unblockDetail = lastUnblockFailure.map { String(localized: "（自定义源：\($0)）") } ?? ""
-        ToastCenter.shared.show(String(localized: "《\(track.name)》无法播放\(reason.map { "：\($0)" } ?? "")\(unblockDetail)"))
+        ToastCenter.shared.show(String(localized: "《\(track.name)》无法播放\(reason.map { "：\($0)" } ?? "")"))
         guard isPlaying else {
             engine.replaceCurrentItem(with: nil)
             releaseCurrentPlaybackResources()
@@ -959,25 +920,15 @@ final class PlayerService: ObservableObject {
         url: URL,
         durationMS: Int?,
         generation: Int,
-        resumeAt: TimeInterval = 0,
-        headers: [String: String]? = nil
+        resumeAt: TimeInterval = 0
     ) async -> ResolvedURLLoadResult {
         // Skip a CDN host that just failed to connect (see CDNHost).
         let remote = CDNHost.preferred(for: url)
 
         var asset = AVURLAsset(url: remote)
         var resourceLoader: CachingAudioResourceLoader?
-        // A custom-source stream (网盘 links) is proxied through the resource
-        // loader even with the song cache off: the loader is what attaches
-        // the headers the file host insists on — AVPlayer alone gets 403.
-        // With caching off the limit is 0, which makes the loader stream
-        // through without writing anything.
-        let wantsCaching = SettingsManager.shared.enableAudioCache && !isTrial
-        let needsHeaderProxy = !(headers ?? [:]).isEmpty
-        if wantsCaching || needsHeaderProxy {
-            let cacheLimitMB = wantsCaching
-                ? await SettingsManager.shared.effectiveAudioCacheSizeMB()
-                : 0
+        if SettingsManager.shared.enableAudioCache, !isTrial {
+            let cacheLimitMB = await SettingsManager.shared.effectiveAudioCacheSizeMB()
             guard generation == resolveGeneration else { return .superseded }
             let source: AudioCacheSource = unblockSource.map(AudioCacheSource.unblock) ?? .origin
             do {
@@ -987,8 +938,7 @@ final class PlayerService: ObservableObject {
                     requestedQuality: SettingsManager.shared.audioQuality.rawValue,
                     servedQuality: servedQuality,
                     source: source,
-                    maximumCacheSizeMB: cacheLimitMB,
-                    headers: headers ?? [:]
+                    maximumCacheSizeMB: cacheLimitMB
                 )
                 guard generation == resolveGeneration else {
                     loader.cancel()
@@ -1302,11 +1252,20 @@ final class PlayerService: ObservableObject {
     }
 
     private func loadLyrics(for track: Track, generation: Int) async {
-        guard generation == resolveGeneration else { return }
-        guard let resolved = await FlutifyLyricsService.shared.resolve(track: track),
-              generation == resolveGeneration else { return }
-        lyrics = resolved.parsed
+        let scope = offlineAccountScope
+        if let scope, let saved = await OfflineMetadataStore.shared.lyrics(trackID: track.id, scope: scope) {
+            guard generation == resolveGeneration else { return }
+            lyrics = LyricsParser.parse(saved)
+            updateLyricsCursor(at: progress)
+        }
+        guard !usesOfflineQueue else { return }
+        let response = try? await MusicAPI.lyric(id: track.id)
+        guard generation == resolveGeneration, let response else { return }
+        lyrics = LyricsParser.parse(response)
         updateLyricsCursor(at: progress)
+        if let scope, SettingsManager.shared.enableAudioCache || DownloadManager.shared.isDownloaded(trackID: track.id) {
+            await OfflineMetadataStore.shared.keepPlaybackData(track: track, lyrics: response, scope: scope)
+        }
     }
 
     // MARK: - Offline playback

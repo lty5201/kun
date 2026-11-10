@@ -218,10 +218,11 @@ final class QueuePrefetcher {
         return .init(url: url, servedQuality: data.level, byteCount: Int64(max(data.size, 0)), fileExtension: data.type)
     }
 
-    /// The artwork a cached song shows offline, like a download.
+    /// The words and artwork a cached song shows offline, like a download.
     static func keepPlaybackData(track: Track, scope: String?) async {
         guard let scope else { return }
+        let lyrics = try? await MusicAPI.lyric(id: track.id)
         guard !Task.isCancelled else { return }
-        await OfflineMetadataStore.shared.keepPlaybackData(track: track, scope: scope)
+        await OfflineMetadataStore.shared.keepPlaybackData(track: track, lyrics: lyrics, scope: scope)
     }
 }

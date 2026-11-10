@@ -45,7 +45,7 @@ Built with SwiftUI · No third-party server · Sparkle auto-updates
 - 🧭 **Explore** — category playlists (curated / official / charts / mood) with infinite scrolling
 - 🎵 **Playback** — AVPlayer engine, Standard to Hi-Res quality (lossless with 黑胶 VIP, automatic fallback), shuffle / repeat one / repeat all, play-next queue, gray track detection
 - 🚗 **CarPlay (iOS, opt-in)** — Now Playing, tabbed library, queue, and search templates ship in the binary; activation requires an [Apple CarPlay audio entitlement](https://developer.apple.com/contact/carplay/), which is not granted to most accounts. Build defaults to disabled so the source tree stays open-source-friendly; see [Enabling CarPlay](#enabling-carplay-ios) below
-- 🔓 **Gray track unblocking** — unavailable or trial-only tracks resolve through a Luoxue (LX Music) custom source script you pick in Settings; the script runs locally and nothing is built in
+- 🔓 **Gray track unblocking** — native implementation of the common unblock sources (pyncmd / Kuwo / Kugou); unavailable or trial-only tracks automatically resolve from third-party sources
 - 🖼 **Immersive now-playing page** — artwork-tinted gradient backdrop, large artwork, big synced lyrics (click the player-bar artwork to open, Esc to close)
 - 📻 **Personal FM** — immersive roaming page with trash / skip
 - 📝 **Lyrics** — glass side panel with line-synced lyrics + translation, click to seek
@@ -198,7 +198,7 @@ below, but their design and implementation ideas were referenced extensively:
 
 - [YesPlayMusic](https://github.com/qier222/YesPlayMusic) (MIT, © qier222) — feature design, and a reference for their API design conventions
 - [kaset](https://github.com/sozercan/kaset) (MIT, © sozercan) — UI design system, motion, and SwiftPM packaging approach
-- [lx-music-source](https://github.com/lyswhut/lx-music-source) and the LX Music custom source script ecosystem — the user-script API this player's Luoxue integration follows (`LuoxueScriptRuntime.swift`)
+- The open-source gray-track unblock server project (LGPL-3.0-only) — a reference for their API design conventions and source matching strategy (`UnblockService.swift` is an independent Swift reimplementation)
 - [LyricsX](https://github.com/ddddxxx/LyricsX) (MPL-2.0, © ddddxxx) — desktop lyrics window design reference (window configuration, screen-factor positioning; `DesktopLyrics.swift` is an independent SwiftUI implementation)
 
 ## License

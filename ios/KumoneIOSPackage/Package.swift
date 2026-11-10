@@ -18,7 +18,7 @@ let package = Package(
         .target(
             name: "KumoneIOSFeature",
             dependencies: [
-                .product(name: "KumoneCore", package: "kun"),
+                .product(name: "KumoneCore", package: "kumone"),
             ],
             path: "Sources/KumoneIOSFeature"
         ),

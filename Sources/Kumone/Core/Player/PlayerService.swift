@@ -495,22 +495,6 @@ final class PlayerService: ObservableObject {
         }
     }
 
-    /// Re-resolves the current track at the newly picked quality and resumes
-    /// from the same position — the quality sheet takes effect on the song
-    /// that is playing right now, like the official app, instead of only on
-    /// the next one. Skipped when nothing streams (local file / stopped /
-    /// already serving that level), where the preference alone is enough.
-    func applyQualityChangeIfPlaying() {
-        guard isPlaying, let track = currentTrack else { return }
-        guard currentLocalURL == nil else { return }
-        // A custom-source stream is not quality-switchable (the script picks
-        // its own format), and re-resolving it would just reload for nothing.
-        if unblockSource != nil, servedQuality == nil { return }
-        let wanted = SettingsManager.shared.audioQuality.rawValue
-        if let served = servedQuality, served == wanted { return }
-        startPlaying(track, resumeAt: progress)
-    }
-
     /// Insert a track right after the current one.
     func addToPlayNext(_ track: Track, playNow: Bool = false) {
         playNextList.append(track)
@@ -1088,10 +1072,15 @@ final class PlayerService: ObservableObject {
         if let urlString = data?.url {
             url = URL(string: urlString.replacingOccurrences(of: "http://", with: "https://"))
         }
-        // The service refused — resolve through the Luoxue custom source
-        // (single-shot here, so nothing is excluded).
+        // The service refused — try third-party sources (unblock-style).
+        // #104 made the source list configurable; resolve through the enabled
+        // sources (single-shot here, so nothing is excluded).
         if url == nil || data?.freeTrialInfo != nil, SettingsManager.shared.enableUnblock {
-            let resolution = await UnblockService.resolve(track, excluding: [])
+            let resolution = await UnblockService.resolve(
+                track,
+                enabledSources: SettingsManager.shared.enabledAudioSourceIDs,
+                excluding: []
+            )
             if let unblocked = resolution.source {
                 url = unblocked.url
                 unblock = unblocked.displayName
@@ -1163,7 +1152,7 @@ final class PlayerService: ObservableObject {
         scheduleAudioUnitReadback()
         unblockSource = resolved.unblockSource
         if let source = resolved.unblockSource {
-            ToastCenter.shared.show(String(localized: "已使用自定义源：\(source)"))
+            ToastCenter.shared.show(String(localized: "已使用第三方音源：\(source)"))
         }
         if resolved.isTrial {
             isTrial = true
@@ -1520,7 +1509,7 @@ final class PlayerService: ObservableObject {
             // AutoMix uses words/analysis to plan future seams. Plain gapless
             // needs only the audio; its displayed lyrics load after adoption.
             async let lyrics: Void = autoMix
-                ? LyricsSidecar.fetchAndWrite(track: target, for: local) : ()
+                ? LyricsSidecar.fetchAndWrite(trackID: target.id, for: local) : ()
             if autoMix { AutoMixDebugModel.shared.setNextStage(.analyzing) }
             let analysis = autoMix ? await self.analysis(for: resolved.key, fileURL: local) : nil
             guard !Task.isCancelled, generation == self.resolveGeneration,
@@ -2725,12 +2714,23 @@ final class PlayerService: ObservableObject {
     }
 
     private func loadLyrics(for track: Track, generation: Int) async {
-        guard !Task.isCancelled, generation == resolveGeneration else { return }
-        guard let resolved = await FlutifyLyricsService.shared.resolve(track: track),
-              !Task.isCancelled, generation == resolveGeneration else { return }
-        lyrics = resolved.parsed
+        let scope = offlineAccountScope
+        if let scope, let saved = await OfflineMetadataStore.shared.lyrics(trackID: track.id, scope: scope) {
+            guard !Task.isCancelled, generation == resolveGeneration else { return }
+            applyLyrics(saved)
+        }
+        guard !Task.isCancelled, generation == resolveGeneration, !usesOfflineQueue else { return }
+        let response = try? await MusicAPI.lyric(id: track.id)
+        guard !Task.isCancelled, generation == resolveGeneration, let response else { return }
+        applyLyrics(response)
+        // The engine caches every song it streams, so each one may play offline.
+        if let scope { await OfflineMetadataStore.shared.keepPlaybackData(track: track, lyrics: response, scope: scope) }
+    }
+
+    private func applyLyrics(_ response: LyricResponse) {
+        lyrics = LyricsParser.parse(response)
         updateLyricsCursor(at: livePlaybackTime)
-        currentLyricLRC = resolved.rawLRC
+        currentLyricLRC = response.lrc?.lyric
         persistCurrentLyricsSidecar()
     }
 

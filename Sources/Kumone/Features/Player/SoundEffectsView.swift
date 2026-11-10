@@ -181,7 +181,7 @@ private struct SoundEffectsContent: View {
         case .preparing:
             HStack(spacing: 10) {
                 ProgressView().controlSize(.small)
-                Text("正在准备当前来源的音效处理…")
+                Text("正在准备当前音源的音效处理…")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -189,7 +189,7 @@ private struct SoundEffectsContent: View {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
-                Text("当前来源暂不支持音效，将保持原声播放；所选方案会在下一首可处理歌曲自动生效。")
+                Text("当前音源暂不支持音效，将保持原声播放；所选方案会在下一首可处理歌曲自动生效。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

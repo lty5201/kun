@@ -4,7 +4,6 @@ struct PlayerBar: View {
     @EnvironmentObject private var player: PlayerService
     @EnvironmentObject private var account: AccountStore
     @EnvironmentObject private var settings: SettingsManager
-    @State private var showingQualitySheet = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -26,13 +25,6 @@ struct PlayerBar: View {
         .padding(.horizontal, 20)
         .padding(.bottom, Theme.Layout.playerBarBottomMargin)
         .background(alignment: .bottom) { bottomFade }
-        .sheet(isPresented: $showingQualitySheet) {
-            AudioQualitySheet()
-                .environmentObject(player)
-                .environmentObject(settings)
-                .environmentObject(account)
-                .tint(Theme.accent)
-        }
     }
 
     // MARK: - Left: artwork + titles + like
@@ -215,16 +207,10 @@ struct PlayerBar: View {
         HStack(spacing: 4) {
             if !compact, let level = player.servedQuality,
                let quality = AudioQuality(rawValue: level) {
-                Button {
-                    showingQualitySheet = true
-                } label: {
-                    QualityTag(text: quality.badge)
-                }
-                .buttonStyle(.plain)
-                .help(String(localized: "当前歌曲音质"))
-                .padding(.trailing, 2)
+                QualityTag(text: quality.badge)
+                    .padding(.trailing, 2)
             } else if !compact, player.unblockSource != nil {
-                QualityTag(text: String(localized: "自定义源"))
+                QualityTag(text: String(localized: "音源"))
                     .padding(.trailing, 2)
                     .help("来自 \(player.unblockSource ?? "")")
             }
