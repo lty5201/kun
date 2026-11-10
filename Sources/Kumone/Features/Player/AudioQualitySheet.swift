@@ -95,10 +95,18 @@ struct AudioQualitySheet: View {
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .topTrailing) {
-                    Image(systemName: quality == .sky ? "circle.circle.dotted" : "waveform")
-                        .font(.system(size: 30, weight: .light))
-                        .foregroundStyle(tierGold)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Group {
+                        if quality == .sky {
+                            // 多层同心椭圆波纹 — the reference sheet's ripple.
+                            RippleIcon(color: tierGold)
+                                .frame(width: 40, height: 30)
+                        } else {
+                            // 三叶母带卷盘 — the reference sheet's reel.
+                            ReelIcon(color: tierGold)
+                                .frame(width: 30, height: 30)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     if let badge = quality.tierBadge {
                         Text(badge)
                             .font(.system(size: 8, weight: .bold))
@@ -158,7 +166,8 @@ struct AudioQualitySheet: View {
     // MARK: - Rows
 
     /// The reference sheet draws the 臻音全景声 row with a diamond outline and
-    /// the 高清臻音 row with equalizer bars; the rest use their short badge.
+    /// the 高清臻音 row with equalizer level bars; Hi-Res shows a plain "H"
+    /// and the rest their short badge text.
     @ViewBuilder
     private func rowIcon(_ quality: AudioQuality) -> some View {
         ZStack {
@@ -167,13 +176,15 @@ struct AudioQualitySheet: View {
                 .frame(width: 34, height: 34)
             switch quality {
             case .vivid:
-                Image(systemName: "diamond")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(tierGold)
+                // 钻石线框 — hollow rotated-square outline.
+                DiamondOutlineIcon(color: tierGold)
             case .jyeffect:
-                Image(systemName: "equalizer")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(tierGold)
+                // 多段均衡器电平柱.
+                EQBarsIcon(color: tierGold)
+            case .hires:
+                Text("H")
+                    .font(.system(size: 13, weight: .bold))
+                    .minimumScaleFactor(0.6)
             default:
                 Text(quality.badge)
                     .font(.system(size: 10, weight: .bold))
@@ -229,7 +240,82 @@ struct AudioQualitySheet: View {
 
     private func select(_ quality: AudioQuality) {
         settings.audioQuality = quality
+        // Switch the current song straight away instead of waiting for the
+        // next one, like the official app.
+        player.applyQualityChangeIfPlaying()
         dismiss()
+    }
+}
+
+// MARK: - The reference sheet's hand-drawn tier icons
+
+/// 多层同心椭圆波纹 — the 沉浸环绕声 card icon.
+private struct RippleIcon: View {
+    let color: Color
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<3, id: \.self) { layer in
+                Ellipse()
+                    .strokeBorder(
+                        color.opacity(1 - Double(layer) * 0.22),
+                        lineWidth: 1.6)
+                    .frame(width: 15 + CGFloat(layer) * 12,
+                           height: 10 + CGFloat(layer) * 9)
+            }
+        }
+    }
+}
+
+/// 三叶母带卷盘 — the 超清母带 card icon: a reel outline with three leaves
+/// around a hub.
+private struct ReelIcon: View {
+    let color: Color
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .strokeBorder(color, lineWidth: 2)
+            Circle()
+                .fill(color)
+                .frame(width: 5, height: 5)
+            ForEach(0..<3, id: \.self) { leaf in
+                let angle = Double(leaf) * 2 * .pi / 3 - .pi / 2
+                Circle()
+                    .fill(color)
+                    .frame(width: 5.5, height: 5.5)
+                    .offset(x: 8 * cos(angle), y: 8 * sin(angle))
+            }
+        }
+    }
+}
+
+/// 钻石线框 — the 臻音全景声 row icon.
+private struct DiamondOutlineIcon: View {
+    let color: Color
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 2, style: .continuous)
+            .strokeBorder(color, lineWidth: 1.6)
+            .frame(width: 13, height: 13)
+            .rotationEffect(.degrees(45))
+    }
+}
+
+/// 多段均衡器电平柱 — the 高清臻音 row icon.
+private struct EQBarsIcon: View {
+    let color: Color
+
+    private let heights: [CGFloat] = [7, 13, 16, 11, 5]
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(heights.indices, id: \.self) { index in
+                Capsule()
+                    .fill(color)
+                    .frame(width: 2.6, height: heights[index])
+            }
+        }
     }
 }
 

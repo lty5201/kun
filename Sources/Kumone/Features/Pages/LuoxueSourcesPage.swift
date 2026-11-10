@@ -32,7 +32,9 @@ struct LuoxueSourcesPage: View {
         #endif
         .fileImporter(
             isPresented: $showingFileImporter,
-            allowedContentTypes: [.item],
+            // .folder so whole folders of scripts are pickable, matching the
+            // advertised batch import.
+            allowedContentTypes: [.item, .folder],
             allowsMultipleSelection: true
         ) { result in
             switch result {
@@ -216,7 +218,7 @@ struct LuoxueSourcesPage: View {
             defer { importing = false }
             let result = await manager.installLocalBatch(scriptsAt: urls)
             if result.failures.isEmpty {
-                if result.installed > 1 {
+                if result.installed > 0 {
                     ToastCenter.shared.show(String(localized: "已导入 \(result.installed) 个音源"))
                 }
             } else {

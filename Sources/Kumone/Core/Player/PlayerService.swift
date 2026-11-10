@@ -495,6 +495,22 @@ final class PlayerService: ObservableObject {
         }
     }
 
+    /// Re-resolves the current track at the newly picked quality and resumes
+    /// from the same position — the quality sheet takes effect on the song
+    /// that is playing right now, like the official app, instead of only on
+    /// the next one. Skipped when nothing streams (local file / stopped /
+    /// already serving that level), where the preference alone is enough.
+    func applyQualityChangeIfPlaying() {
+        guard isPlaying, let track = currentTrack else { return }
+        guard currentLocalURL == nil else { return }
+        // A custom-source stream is not quality-switchable (the script picks
+        // its own format), and re-resolving it would just reload for nothing.
+        if unblockSource != nil, servedQuality == nil { return }
+        let wanted = SettingsManager.shared.audioQuality.rawValue
+        if let served = servedQuality, served == wanted { return }
+        startPlaying(track, resumeAt: progress)
+    }
+
     /// Insert a track right after the current one.
     func addToPlayNext(_ track: Track, playNow: Bool = false) {
         playNextList.append(track)

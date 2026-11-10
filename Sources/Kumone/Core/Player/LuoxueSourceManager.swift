@@ -39,6 +39,7 @@ final class LuoxueSourceManager: ObservableObject {
         case emptyScript
         case tooLarge
         case notJavaScript
+        case noScriptsInFolder
 
         var errorDescription: String? {
             switch self {
@@ -47,6 +48,7 @@ final class LuoxueSourceManager: ObservableObject {
             case .emptyScript: return String(localized: "脚本内容为空")
             case .tooLarge: return String(localized: "脚本文件过大（上限 10 MB）")
             case .notJavaScript: return String(localized: "内容不像 JavaScript 脚本")
+            case .noScriptsInFolder: return String(localized: "文件夹里没有 .js 脚本")
             }
         }
     }
@@ -196,30 +198,50 @@ final class LuoxueSourceManager: ObservableObject {
     /// files can be selected at once, and a selected folder has every `.js`
     /// inside imported. Each script becomes its own source; per-file failures
     /// are reported in `failures` so one bad file does not abort the batch.
+    ///
+    /// Everything is read while the picker's security scope is held: listing
+    /// a picked folder — and reading its children — is silently refused by the
+    /// sandbox without it, which used to make 本地导入 fail wholesale.
     @discardableResult
     func installLocalBatch(scriptsAt urls: [URL]) async -> (installed: Int, failures: [(name: String, error: String)]) {
-        // Expand directories into their .js contents.
-        var files: [URL] = []
+        var picked: [(name: String, data: Data)] = []
+        var failures: [(name: String, error: String)] = []
+
         for url in urls {
-            var isDirectory: ObjCBool = false
-            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
-                let children = (try? FileManager.default.contentsOfDirectory(
-                    at: url, includingPropertiesForKeys: nil,
-                    options: [.skipsHiddenFiles])) ?? []
-                files += children.filter { $0.pathExtension.lowercased() == "js" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
-            } else {
-                files.append(url)
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+
+            // fileExists alone cannot tell a folder from a file for a scoped
+            // URL the sandbox has not granted yet, so ask the URL itself.
+            let isFolder = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory
+                ?? FileManager.default.fileExists(atPath: url.path, isDirectory: nil)
+
+            do {
+                if isFolder {
+                    let children = try FileManager.default.contentsOfDirectory(
+                        at: url, includingPropertiesForKeys: nil,
+                        options: [.skipsHiddenFiles])
+                        .filter { $0.pathExtension.lowercased() == "js" }
+                        .sorted { $0.lastPathComponent < $1.lastPathComponent }
+                    guard !children.isEmpty else { throw ImportError.noScriptsInFolder }
+                    for child in children {
+                        picked.append((name: child.lastPathComponent, data: try Data(contentsOf: child)))
+                    }
+                } else {
+                    picked.append((name: url.lastPathComponent, data: try Data(contentsOf: url)))
+                }
+            } catch {
+                failures.append((url.lastPathComponent, error.localizedDescription))
             }
         }
 
         var installed = 0
-        var failures: [(name: String, error: String)] = []
-        for url in files {
+        for item in picked {
             do {
-                try await installLocal(scriptAt: url)
+                try await install(data: item.data, name: item.name, originURL: nil)
                 installed += 1
             } catch {
-                failures.append((url.lastPathComponent, error.localizedDescription))
+                failures.append((item.name, error.localizedDescription))
             }
         }
         return (installed, failures)
