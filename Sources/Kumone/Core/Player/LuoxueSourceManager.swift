@@ -485,10 +485,13 @@ final class LuoxueSourceManager: ObservableObject {
     static func lxQuality(for quality: AudioQuality, supported: [String]?) -> String {
         let preference: [AudioQuality: [String]] = [
             .standard: ["128k"],
-            .higher: ["320k", "128k"],
+            .higher: ["192k", "320k", "128k"],
             .exhigh: ["320k", "128k"],
             .lossless: ["flac", "320k", "128k"],
             .hires: ["flac24bit", "flac", "320k", "128k"],
+            .jyeffect: ["flac24bit", "flac", "320k", "128k"],
+            .sky: ["flac24bit", "flac", "320k", "128k"],
+            .jymaster: ["flac24bit", "flac", "320k", "128k"],
         ]
         let order = preference[quality] ?? ["320k", "128k"]
         guard let supported, !supported.isEmpty else { return order.first ?? "128k" }

@@ -6,6 +6,11 @@ enum AudioQuality: String, CaseIterable, Identifiable {
     case exhigh
     case lossless
     case hires
+    // NetEase's newer tiers; the API degrades to whatever the account can
+    // actually stream, same as the official app's sheet.
+    case jyeffect
+    case sky
+    case jymaster
 
     var id: String { rawValue }
 
@@ -13,9 +18,12 @@ enum AudioQuality: String, CaseIterable, Identifiable {
         switch self {
         case .standard: return String(localized: "标准")
         case .higher: return String(localized: "较高")
-        case .exhigh: return String(localized: "极高")
-        case .lossless: return String(localized: "无损")
-        case .hires: return "Hi-Res"
+        case .exhigh: return String(localized: "极高 HQ")
+        case .lossless: return String(localized: "无损 SQ")
+        case .hires: return String(localized: "高清臻音")
+        case .jyeffect: return String(localized: "臻音全景声")
+        case .sky: return String(localized: "沉浸环绕声")
+        case .jymaster: return String(localized: "超清母带")
         }
     }
 
@@ -23,9 +31,50 @@ enum AudioQuality: String, CaseIterable, Identifiable {
         switch self {
         case .standard: return String(localized: "标准")
         case .higher: return String(localized: "较高")
-        case .exhigh: return String(localized: "极高")
-        case .lossless: return String(localized: "无损")
-        case .hires: return String(localized: "高解析")
+        case .exhigh: return "HQ"
+        case .lossless: return "SQ"
+        case .hires: return String(localized: "高清臻音")
+        case .jyeffect: return String(localized: "臻音")
+        case .sky: return String(localized: "环绕声")
+        case .jymaster: return String(localized: "母带")
+        }
+    }
+
+    /// The sheet's secondary line, matching the official app's wording.
+    var detailText: String {
+        switch self {
+        case .standard: return String(localized: "128kbps")
+        case .higher: return String(localized: "192kbps")
+        case .exhigh: return String(localized: "近 CD 音质的细节体验，最高320kbps")
+        case .lossless: return String(localized: "高保真无损音质，最高48kHz/16bit")
+        case .hires: return String(localized: "高频细节还原与清晰沉浸感，96kHz/24bit")
+        case .jyeffect: return String(localized: "沉浸三维空间音频，最高7.1.4声道")
+        case .sky: return String(localized: "环绕音感，最高5.1声道")
+        case .jymaster: return String(localized: "极致细节 192kHz/24bit")
+        }
+    }
+
+    /// The badge shown beside the tier name: SVIP / VIP tiers follow the
+    /// official sheet; 标准 has none.
+    var tierBadge: String? {
+        switch self {
+        case .jymaster, .sky, .jyeffect: return "SVIP"
+        case .hires, .lossless, .exhigh: return "VIP"
+        case .standard, .higher: return nil
+        }
+    }
+
+    /// Order in the quality sheet, best first — matches the official app.
+    var sheetOrder: Int {
+        switch self {
+        case .sky: return 0
+        case .jymaster: return 1
+        case .jyeffect: return 2
+        case .hires: return 3
+        case .lossless: return 4
+        case .exhigh: return 5
+        case .higher: return 6
+        case .standard: return 7
         }
     }
 }

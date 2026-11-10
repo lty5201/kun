@@ -1692,7 +1692,9 @@ private struct ImmersiveArtworkFramePreferenceKey: PreferenceKey {
 private struct CompactTrackHeader: View {
     @EnvironmentObject private var player: PlayerService
     @EnvironmentObject private var account: AccountStore
+    @EnvironmentObject private var settings: SettingsManager
     @State private var showAddToPlaylist = false
+    @State private var showingQualitySheet = false
 
     let showsExpandedArtwork: Bool
     let onOpenDestination: (Destination) -> Void
@@ -1732,6 +1734,30 @@ private struct CompactTrackHeader: View {
                         color: .white.opacity(0.62),
                         onOpenDestination: onOpenDestination
                     )
+                }
+                // 当前歌曲音质：tap to open the quality sheet, like the
+                // official app's badge under the song info.
+                Button {
+                    showingQualitySheet = true
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 9))
+                        Text(currentQualityBadge)
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(.white.opacity(0.7))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background(.white.opacity(0.14), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("当前歌曲音质"))
+                .sheet(isPresented: $showingQualitySheet) {
+                    AudioQualitySheet()
+                        .environmentObject(player)
+                        .environmentObject(settings)
+                        .tint(Theme.accent)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1808,6 +1834,15 @@ private struct CompactTrackHeader: View {
                 AddToPlaylistSheet(track: track)
             }
         }
+    }
+
+    /// What the small quality capsule under the song info reads: the level
+    /// actually being served when there is one, else the preference.
+    private var currentQualityBadge: String {
+        if let level = player.servedQuality, let served = AudioQuality(rawValue: level) {
+            return served.badge
+        }
+        return settings.audioQuality.badge
     }
 }
 

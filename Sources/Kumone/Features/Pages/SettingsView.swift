@@ -112,7 +112,7 @@ struct SettingsView: View {
                         Text(quality.displayName).tag(quality)
                     }
                 }
-                Text("无损与 Hi-Res 需要黑胶 VIP，未开通时自动回落到可用音质")
+                Text("无损、高清臻音、全景声与母带需黑胶 VIP，未开通时自动回落到可用音质；播放页与底部控制栏的音质标签可点开切换")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 #if os(iOS)
