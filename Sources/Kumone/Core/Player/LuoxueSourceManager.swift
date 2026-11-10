@@ -265,7 +265,7 @@ final class LuoxueSourceManager: ObservableObject {
             return data
         }
         var data: Data?
-        var coordinatorError: Error?
+        var coordinatorError: NSError?
         let coordinator = NSFileCoordinator()
         coordinator.coordinate(readingItemAt: url, options: [], error: &coordinatorError) { readURL in
             data = try? Data(contentsOf: readURL)
