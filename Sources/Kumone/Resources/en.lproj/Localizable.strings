@@ -205,6 +205,9 @@
 
 /* Settings */
 "音质" = "Audio Quality";
+"播放音质" = "Playback Quality";
+"下载音质" = "Download Quality";
+"无损、Hi-Res 与高清臻音需黑胶 VIP，全景声与母带需 SVIP，未开通时自动回落到可用音质；下载音质独立于播放音质，仅对新发起的下载生效；播放页与底部控制栏的音质标签可点开切换" = "Lossless, Hi-Res and hi-res audio require VIP, spatial audio and master require SVIP; falls back automatically otherwise. Download quality is separate from playback quality and only applies to new downloads. Tap the quality badge in the player or the bottom bar to switch.";
 "标准" = "Standard";
 "较高" = "Higher";
 "极高" = "Extreme";

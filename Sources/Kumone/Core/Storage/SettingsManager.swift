@@ -197,6 +197,7 @@ final class SettingsManager: ObservableObject {
     /// the key the same way.
     enum Keys {
         static let quality = "settings.audioQuality"
+        static let downloadQuality = "settings.downloadQuality"
         static let appearance = "settings.appearance"
         static let nowPlayingMode = "settings.nowPlayingMode"
         static let landscapeNowPlayingStyle = "settings.landscapeNowPlayingStyle"
@@ -311,6 +312,14 @@ final class SettingsManager: ObservableObject {
 
     @Published var audioQuality: AudioQuality {
         didSet { UserDefaults.standard.set(audioQuality.rawValue, forKey: Keys.quality) }
+    }
+
+    /// The quality new downloads are requested at — independent of the
+    /// streaming preference, so saving data on playback doesn't mean saving
+    /// it on downloads (or vice versa). Unset on upgrade: inherits the
+    /// streaming quality, which is what downloads used before.
+    @Published var downloadQuality: AudioQuality {
+        didSet { UserDefaults.standard.set(downloadQuality.rawValue, forKey: Keys.downloadQuality) }
     }
 
     static let audioCacheSizeRangeMB = 100...10_000
@@ -611,6 +620,7 @@ final class SettingsManager: ObservableObject {
     private init() {
         let defaults = UserDefaults.standard
         audioQuality = defaults.string(forKey: Keys.quality).flatMap(AudioQuality.init) ?? .exhigh
+        downloadQuality = defaults.string(forKey: Keys.downloadQuality).flatMap(AudioQuality.init) ?? audioQuality
         enableAudioCache = defaults.object(forKey: Keys.enableAudioCache) as? Bool ?? true
         // A size somebody chose stays chosen; the untouched default becomes automatic.
         audioCacheAutomatic = defaults.object(forKey: Keys.audioCacheAutomatic) as? Bool

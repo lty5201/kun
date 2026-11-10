@@ -25,6 +25,7 @@ extension SettingsManager {
     var syncPreferenceChanges: AnyPublisher<Void, Never> {
         Publishers.MergeMany([
             $audioQuality.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
+            $downloadQuality.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
             $appearance.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
             $showLyricsTranslation.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
             $lyricsAnnotation.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
@@ -38,6 +39,7 @@ extension SettingsManager {
     /// layouts stay local. Unknown fields remain in SyncedPreferences for newer apps.
     var syncPreferences: [String: PreferenceValue] {
         [Keys.quality: .string(audioQuality.rawValue),
+         Keys.downloadQuality: .string(downloadQuality.rawValue),
          Keys.appearance: .string(appearance.rawValue),
          Keys.showTranslation: .boolean(showLyricsTranslation),
          Keys.annotation: .string(lyricsAnnotation.rawValue),
@@ -52,6 +54,8 @@ extension SettingsManager {
             switch (key, edit.value) {
             case (Keys.quality, .string(let value)):
                 guard AudioQuality(rawValue: value) != nil else { throw SyncError.invalidRecord }
+            case (Keys.downloadQuality, .string(let value)):
+                guard AudioQuality(rawValue: value) != nil else { throw SyncError.invalidRecord }
             case (Keys.appearance, .string(let value)):
                 guard AppAppearance(rawValue: value) != nil else { throw SyncError.invalidRecord }
             case (Keys.annotation, .string(let value)):
@@ -62,7 +66,7 @@ extension SettingsManager {
                 }
             case (Keys.showTranslation, .boolean),
                  (Keys.unblock, .boolean), (Keys.mainWindowAmbientBackground, .boolean): break
-            case (Keys.quality, _), (Keys.appearance, _), (Keys.annotation, _),
+            case (Keys.quality, _), (Keys.downloadQuality, _), (Keys.appearance, _), (Keys.annotation, _),
                  (Keys.mainWindowAmbientBackgroundIntensity, _), (Keys.showTranslation, _),
                  (Keys.unblock, _),
                  (Keys.mainWindowAmbientBackground, _):
@@ -75,6 +79,8 @@ extension SettingsManager {
             switch (key, edit.value) {
             case (Keys.quality, .string(let value)):
                 if let quality = AudioQuality(rawValue: value) { audioQuality = quality }
+            case (Keys.downloadQuality, .string(let value)):
+                if let quality = AudioQuality(rawValue: value) { downloadQuality = quality }
             case (Keys.appearance, .string(let value)):
                 if let theme = AppAppearance(rawValue: value) { appearance = theme }
             case (Keys.annotation, .string(let value)):

@@ -7,6 +7,20 @@
 `---` 分隔，随后是完整的**中文**部分（`### 新增` / `### 修复` / `### 改进`）。英文块与中文块
 的条目一一对应、顺序一致。（0.3.19 起采用此双语分块格式；更早的版本沿用旧的中英交替格式。）
 
+## 0.4.7 - 2026-11-10
+
+### Added
+
+- **Downloads (iOS/macOS)**: a dedicated download quality setting. 设置 → 播放 now has separate 播放音质 and 下载音质 pickers, so streaming can stay data-friendly while downloads come in at full quality (or vice versa). New downloads use the download quality; already-downloaded songs and in-flight jobs are untouched. On upgrade the download quality starts at the previous playback quality — exactly what downloads used before. The setting syncs across devices with the other portable preferences.
+
+---
+
+### 新增
+
+- **下载（iOS/macOS）**：新增独立的下载音质设置。「设置 → 播放」中「播放音质」与「下载音质」分开选择——播放可以省流量、下载可以选最高音质（或反过来）。新发起的下载按下载音质获取；已下载的歌曲和进行中的任务不受影响。升级后下载音质默认等于原播放音质（与之前行为一致）。该设置与其他偏好一起多设备同步。
+
+---
+
 ## 0.4.6 - 2026-11-10
 
 ### Added

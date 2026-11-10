@@ -107,12 +107,17 @@ struct SettingsView: View {
     private var settingsForm: some View {
         Form {
             Section("播放") {
-                Picker("音质", selection: $settings.audioQuality) {
+                Picker("播放音质", selection: $settings.audioQuality) {
                     ForEach(AudioQuality.allCases.filter(\.showsInSheet)) { quality in
                         Text(quality.displayName).tag(quality)
                     }
                 }
-                Text("无损、Hi-Res 与高清臻音需黑胶 VIP，全景声与母带需 SVIP，未开通时自动回落到可用音质；播放页与底部控制栏的音质标签可点开切换")
+                Picker("下载音质", selection: $settings.downloadQuality) {
+                    ForEach(AudioQuality.allCases.filter(\.showsInSheet)) { quality in
+                        Text(quality.displayName).tag(quality)
+                    }
+                }
+                Text("无损、Hi-Res 与高清臻音需黑胶 VIP，全景声与母带需 SVIP，未开通时自动回落到可用音质；下载音质独立于播放音质，仅对新发起的下载生效；播放页与底部控制栏的音质标签可点开切换")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 #if os(iOS)

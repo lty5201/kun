@@ -85,7 +85,7 @@ struct TrackDownloadButton: View {
         MeteredDownloadCenter.shared.request(bulk: false, count: 1, network: downloads.network) { metered in
             submit {
                 if let jobID { await downloads.resume(jobID, allowsMetered: metered) }
-                else { await downloads.enqueue(track: track, quality: settings.audioQuality.rawValue, allowsMetered: metered) }
+                else { await downloads.enqueue(track: track, quality: settings.downloadQuality.rawValue, allowsMetered: metered) }
             }
         }
     }
