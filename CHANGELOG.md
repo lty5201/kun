@@ -7,6 +7,20 @@
 `---` 分隔，随后是完整的**中文**部分（`### 新增` / `### 修复` / `### 改进`）。英文块与中文块
 的条目一一对应、顺序一致。（0.3.19 起采用此双语分块格式；更早的版本沿用旧的中英交替格式。）
 
+## 0.4.6 - 2026-11-10
+
+### Added
+
+- **Lyrics (iOS/macOS)**: resolved lyrics are now cached locally as a whole result. A song that has been played once is served entirely from disk on every later play — no source (LRCLIB, QQ Music, Netease) is contacted again, neither for the original nor for the translation. A definitive "no lyrics anywhere" is cached too, so songs without lyrics also stop re-querying every play; network failures are never cached, the next play retries. Toggling 显示歌词翻译 re-resolves once for the new variant.
+
+---
+
+### 新增
+
+- **歌词（iOS/macOS）**：新增歌词本地缓存。歌曲播放过一次后，再次播放直接读本地缓存，不再联网向任何源（LRCLIB、QQ音乐、网易云）重新获取歌词或翻译；确认无歌词的歌曲也会缓存该结果，不再每次播放都重新查询。网络失败不会缓存、下次播放自动重试。切换「显示歌词翻译」后会按新设置重新获取一次。
+
+---
+
 ## 0.4.5 - 2026-11-10
 
 ### Added

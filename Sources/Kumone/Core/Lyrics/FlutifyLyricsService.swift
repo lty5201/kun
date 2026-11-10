@@ -35,23 +35,49 @@ actor FlutifyLyricsService {
     private init() {}
 
     /// Resolves lyrics (with translation prefetch) for a track.
+    ///
+    /// The whole-result cache comes first: a track resolved once is served
+    /// entirely offline afterwards — no source is contacted again.
     func resolve(track: Track) async -> ResolvedLyrics? {
         let query = FLyricsQuery(track: track)
         guard !query.title.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
 
-        // 1. Original: LRCLIB → QQ Music → Netease, first line-synced hit wins.
-        guard var lyrics = await resolveOriginal(query) else { return nil }
-
-        // 2. Optional Chinese translation prefetch for foreign originals.
         let translationEnabled = await MainActor.run {
             SettingsManager.shared.showLyricsTranslation
         }
+        let key = FlutifyLyricsResultCache.key(query, translation: translationEnabled)
+        switch await FlutifyLyricsResultCache.read(key: key) {
+        case .lyrics(let cached):
+            return ResolvedLyrics(
+                parsed: FlutifyLyricsService.parsed(from: cached),
+                rawLRC: originalLRC(for: cached))
+        case .negative:
+            return nil
+        case .miss:
+            break
+        }
+
+        // 1. Original: LRCLIB → QQ Music → Netease, first line-synced hit wins.
+        let original = await resolveOriginal(query)
+        guard var lyrics = original.lyrics else {
+            // Definitive "no lyrics anywhere" — cache the miss so replays of
+            // this track stay offline too. A network failure is not cached.
+            if !original.networkError {
+                await FlutifyLyricsResultCache.writeNegative(key: key)
+                await FlutifyLyricsResultCache.writeNegative(
+                    key: FlutifyLyricsResultCache.key(query, translation: false))
+            }
+            return nil
+        }
+
+        // 2. Optional Chinese translation prefetch for foreign originals.
         if translationEnabled {
             if let translated = await attachTranslation(query, lyrics) {
                 lyrics = translated
             }
         }
 
+        await FlutifyLyricsResultCache.write(key: key, lyrics: lyrics)
         return ResolvedLyrics(
             parsed: FlutifyLyricsService.parsed(from: lyrics),
             rawLRC: originalLRC(for: lyrics))
@@ -62,7 +88,27 @@ actor FlutifyLyricsService {
     func resolveOriginalLyrics(track: Track) async -> ResolvedLyrics? {
         let query = FLyricsQuery(track: track)
         guard !query.title.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
-        guard let lyrics = await resolveOriginal(query) else { return nil }
+
+        let key = FlutifyLyricsResultCache.key(query, translation: false)
+        switch await FlutifyLyricsResultCache.read(key: key) {
+        case .lyrics(let cached):
+            return ResolvedLyrics(
+                parsed: FlutifyLyricsService.parsed(from: cached),
+                rawLRC: originalLRC(for: cached))
+        case .negative:
+            return nil
+        case .miss:
+            break
+        }
+
+        let original = await resolveOriginal(query)
+        guard let lyrics = original.lyrics else {
+            if !original.networkError {
+                await FlutifyLyricsResultCache.writeNegative(key: key)
+            }
+            return nil
+        }
+        await FlutifyLyricsResultCache.write(key: key, lyrics: lyrics)
         return ResolvedLyrics(
             parsed: FlutifyLyricsService.parsed(from: lyrics),
             rawLRC: originalLRC(for: lyrics))
@@ -70,41 +116,40 @@ actor FlutifyLyricsService {
 
     // MARK: - Original resolution
 
-    private func resolveOriginal(_ query: FLyricsQuery) async -> FSpotifyLyrics? {
+    private func resolveOriginal(_ query: FLyricsQuery) async -> (lyrics: FSpotifyLyrics?, networkError: Bool) {
         // LRCLIB: exact get, then searches; cached by track.
-        if let found = await findLrclib(query) {
-            return found
-        }
+        let lrclib = await findLrclib(query)
+        if let found = lrclib.lyrics { return (found, false) }
         // QQ Music: original + translation in one bundle.
         let qqLookup = await QQTranslationSource.findLyrics(query)
-        if let lyrics = qqLookup.lyrics, lyrics.isSynced { return lyrics }
+        if let lyrics = qqLookup.lyrics, lyrics.isSynced { return (lyrics, false) }
         // Netease.
         let neteaseLookup = await NeteaseTranslationSource.findLyrics(query)
-        if let lyrics = neteaseLookup.lyrics, lyrics.isSynced { return lyrics }
-        return nil
+        if let lyrics = neteaseLookup.lyrics, lyrics.isSynced { return (lyrics, false) }
+        return (nil, lrclib.networkError || qqLookup.networkError || neteaseLookup.networkError)
     }
 
-    private func findLrclib(_ query: FLyricsQuery) async -> FSpotifyLyrics? {
-        if query.title.trimmingCharacters(in: .whitespaces).isEmpty { return nil }
+    private func findLrclib(_ query: FLyricsQuery) async -> (lyrics: FSpotifyLyrics?, networkError: Bool) {
+        if query.title.trimmingCharacters(in: .whitespaces).isEmpty { return (nil, false) }
 
         let key = "v5|\(query.trackId)"
         // Cache hit: parse and split any embedded bilingual pairs again.
         if let hit = await cache.read(key) {
             let lines = TranslationMerge.tryMerge(FLrcParser.parse(hit))
             if let lines, !lines.isEmpty {
-                return lyrics(fromLines: lines)
+                return (lyrics(fromLines: lines), false)
             }
         }
 
         let response = await collectLrclibCandidates(query)
         guard let selection = LRCLIBSelector.select(response.candidates, query) else {
-            return nil
+            return (nil, response.networkError)
         }
         let lines = FLrcParser.parse(selection.synced)
-        if lines.isEmpty { return nil }
+        if lines.isEmpty { return (nil, false) }
         await cache.write(key, selection.synced)
-        return lyrics(fromLines: TranslationMerge.tryMerge(lines) ?? lines,
-                      lang: selection.lang)
+        return (lyrics(fromLines: TranslationMerge.tryMerge(lines) ?? lines,
+                       lang: selection.lang), false)
     }
 
     /// Query plan (ported from Flutify's LrclibLyricsSource, candidates stop
