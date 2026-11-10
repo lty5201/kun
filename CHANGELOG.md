@@ -7,6 +7,20 @@
 `---` 分隔，随后是完整的**中文**部分（`### 新增` / `### 修复` / `### 改进`）。英文块与中文块
 的条目一一对应、顺序一致。（0.3.19 起采用此双语分块格式；更早的版本沿用旧的中英交替格式。）
 
+## 0.4.5 - 2026-11-10
+
+### Added
+
+- **Downloads (iOS/macOS)**: downloaded songs can now be exported. Select songs in 已下载 (or a saved collection) and tap 导出 — the finished files are handed to the system share sheet under readable "artist - title" names, so iOS offers 存储/Save to Files and AirDrop, and macOS reveals them in Finder. Exports keep the highest-quality finished asset per song; the store's originals stay untouched.
+
+---
+
+### 新增
+
+- **下载（iOS/macOS）**：已下载歌曲支持导出。在「已下载」或收藏的歌单页勾选歌曲后点「导出」，完成的音频文件会以「歌手 - 歌名」命名交给系统分享面板——iOS 可存储到文件（Save to Files）、隔空投送等，macOS 会在 Finder 中显示。每首歌自动选择最高音质的完整文件；应用内的原始下载不受影响。
+
+---
+
 ## 0.4.4 - 2026-11-10
 
 ### Fixed

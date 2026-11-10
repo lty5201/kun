@@ -76,6 +76,22 @@ actor OfflineStore {
             .compactMap { try availableRecord($0, database: db) }
     }
 
+    /// A completed download's file for export. Unlike `acquire` it never marks
+    /// the record played and accepts any finished asset, best quality first.
+    func exportURL(accountScope: String, trackID: Int) throws -> URL? {
+        let db = try preparedDatabase()
+        let qualities = AudioQuality.allCases.map(\.rawValue)
+        let records = try db.records(scope: accountScope, trackID: trackID).filter { $0.state == .complete }
+        return try records
+            .sorted {
+                (qualities.firstIndex(of: $0.descriptor.identity.quality) ?? -1)
+                    > (qualities.firstIndex(of: $1.descriptor.identity.quality) ?? -1)
+            }
+            .compactMap { try availableRecord($0, database: db) }
+            .first
+            .map { audioURL($0) }
+    }
+
     /// Same filtering as the whole-library scan, for one song only.
     func availableRecords(accountScope: String, trackID: Int) throws -> [OfflineAudioRecord] {
         let db = try preparedDatabase()

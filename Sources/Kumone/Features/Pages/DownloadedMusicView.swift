@@ -1,4 +1,9 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#else
+import AppKit
+#endif
 
 /// A music-library page, using the same rows and layout as Recents and Cloud.
 /// Only explicitly retained downloads belong here; automatic caches stay private.
@@ -13,6 +18,7 @@ struct DownloadedMusicView: View {
     @State private var pendingRemoval: Set<Int> = []
     @State private var removalScope: String?
     @State private var isRemoving = false
+    @State private var isExporting = false
 
     private var collection: DownloadCollection? { downloads.collections.first { $0.id == collectionID } }
     private var tracks: [Track] { downloads.downloadedSongs(in: collectionID) }
@@ -100,10 +106,21 @@ struct DownloadedMusicView: View {
             }
             .disabled(selectedIDs.isEmpty)
             .accessibilityIdentifier("remove-selected-downloads")
+            Button {
+                exportSelection(tracks: tracks)
+            } label: {
+                if isExporting {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("导出")
+                }
+            }
+            .disabled(selectedIDs.isEmpty || isExporting)
+            .accessibilityIdentifier("export-selected-downloads")
         }
         .font(.system(size: 12.5, weight: .medium))
         .buttonStyle(.borderless)
-        .disabled(isRemoving)
+        .disabled(isRemoving || isExporting)
         .padding(.horizontal, Theme.Layout.contentInset)
         .padding(.top, 12)
     }
@@ -121,6 +138,54 @@ struct DownloadedMusicView: View {
             pendingRemoval = []
             if !succeeded { ToastCenter.shared.show(String(localized: "部分下载未能移除，请重试")) }
         }
+    }
+
+    /// Exports hand the finished files to the system share sheet under readable
+    /// "artist - title" names; the store keeps its hash-named originals.
+    private func exportSelection(tracks: [Track]) {
+        guard let scope = downloads.accountScope else { return }
+        let selected = tracks.filter { selectedIDs.contains($0.id) }
+        guard !selected.isEmpty else { return }
+        isExporting = true
+        Task { @MainActor in
+            defer { isExporting = false }
+            var staged: [URL] = []
+            for track in selected {
+                guard downloads.accountScope == scope else { return }
+                guard let url = try? await OfflineStore.shared.exportURL(accountScope: scope, trackID: track.id) else { continue }
+                do {
+                    staged.append(try DownloadExportStaging.stage(track: track, source: url))
+                } catch {
+                    ToastCenter.shared.show(String(localized: "导出失败：\(error.localizedDescription)"))
+                    return
+                }
+            }
+            guard !staged.isEmpty else {
+                ToastCenter.shared.show(String(localized: "未找到可导出的下载文件"))
+                return
+            }
+            presentExport(staged)
+        }
+    }
+
+    private func presentExport(_ urls: [URL]) {
+        #if os(iOS)
+        guard let scene = UIApplication.shared.connectedScenes
+            .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+              let root = scene.keyWindow?.rootViewController else { return }
+        var presenter = root
+        while let next = presenter.presentedViewController { presenter = next }
+        let activity = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+        if let pop = activity.popoverPresentationController {
+            pop.sourceView = presenter.view
+            pop.sourceRect = CGRect(x: presenter.view.bounds.midX,
+                                    y: presenter.view.bounds.midY, width: 0, height: 0)
+            pop.permittedArrowDirections = []
+        }
+        presenter.present(activity, animated: true)
+        #else
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
+        #endif
     }
 
     private func header(tracks: [Track]) -> some View {
@@ -565,5 +630,31 @@ struct DownloadCollectionButton: View {
             pendingRemoval = []
             if !succeeded { ToastCenter.shared.show(String(localized: "部分下载未能移除，请重试")) }
         }
+    }
+}
+
+/// Exports get readable names, so the share sheet and "Save to Files" show
+/// "artist - title" instead of the store's content-hash file names.
+private enum DownloadExportStaging {
+    static func stage(track: Track, source: URL) throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KumoneExport-\(Int(Date().timeIntervalSince1970))", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let invalid = CharacterSet(charactersIn: "/\\:?%*|\"<>").union(.newlines).union(.controlCharacters)
+        let artist = track.artistNames.components(separatedBy: invalid).joined(separator: "-")
+            .trimmingCharacters(in: .whitespaces)
+        let title = track.name.components(separatedBy: invalid).joined(separator: "-")
+            .trimmingCharacters(in: .whitespaces)
+        let base = artist.isEmpty || title.isEmpty ? (artist.isEmpty ? title : artist) : "\(artist) - \(title)"
+        let ext = source.pathExtension.isEmpty ? "mp3" : source.pathExtension
+        var name = "\(base).\(ext)"
+        var counter = 2
+        while FileManager.default.fileExists(atPath: root.appendingPathComponent(name).path) {
+            name = "\(base) (\(counter)).\(ext)"
+            counter += 1
+        }
+        let destination = root.appendingPathComponent(name)
+        try FileManager.default.copyItem(at: source, to: destination)
+        return destination
     }
 }
