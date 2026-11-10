@@ -208,7 +208,6 @@ final class SettingsManager: ObservableObject {
         static let fmMode = "settings.fmMode"
         static let unblock = "settings.enableUnblock"
         static let luoxueScriptPath = "settings.luoxueScriptPath"
-        static let customSourceHeaders = "settings.customSourceHeaders"
         static let autoCheckUpdates = "settings.autoCheckUpdates"
         static let desktopLyrics = "settings.showDesktopLyrics"
         #if os(macOS)
@@ -446,28 +445,6 @@ final class SettingsManager: ObservableObject {
         return enableUnblock && LuoxueSourceManager.shared.isReady
     }
 
-    /// Extra request headers for custom-source playback and downloads, one
-    /// `Name: value` per line. 网盘 sources serve links that only answer to
-    /// a specific User-Agent / Referer / Cookie, so the user can add them
-    /// here once instead of per song.
-    @Published var customSourceHeaders: String {
-        didSet { UserDefaults.standard.set(customSourceHeaders, forKey: Keys.customSourceHeaders) }
-    }
-
-    var parsedCustomSourceHeaders: [String: String] {
-        var parsed: [String: String] = [:]
-        for line in customSourceHeaders.split(whereSeparator: \.isNewline) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
-            guard let separator = trimmed.firstIndex(of: ":") else { continue }
-            let name = trimmed[..<separator].trimmingCharacters(in: .whitespaces)
-            let value = trimmed[trimmed.index(after: separator)...].trimmingCharacters(in: .whitespaces)
-            guard !name.isEmpty, !value.isEmpty else { continue }
-            parsed[name] = value
-        }
-        return parsed
-    }
-
     /// Floating desktop lyrics window (LyricsX-style).
     @Published var showDesktopLyrics: Bool {
         didSet { UserDefaults.standard.set(showDesktopLyrics, forKey: Keys.desktopLyrics) }
@@ -653,7 +630,6 @@ final class SettingsManager: ObservableObject {
         lyricsAnnotation = defaults.string(forKey: Keys.annotation).flatMap(LyricsAnnotation.init)
             ?? (defaults.bool(forKey: Keys.showRomaji) ? .romaji : .off)
         enableUnblock = defaults.object(forKey: Keys.unblock) as? Bool ?? true
-        customSourceHeaders = defaults.string(forKey: Keys.customSourceHeaders) ?? ""
         autoCheckUpdates = defaults.object(forKey: Keys.autoCheckUpdates) as? Bool ?? true
         showDesktopLyrics = defaults.object(forKey: Keys.desktopLyrics) as? Bool ?? false
         #if os(macOS)

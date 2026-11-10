@@ -14,7 +14,6 @@ import UIKit
 /// sources with per-source enable / refresh / delete.
 struct LuoxueSourcesPage: View {
     @ObservedObject private var manager = LuoxueSourceManager.shared
-    @ObservedObject private var settings = SettingsManager.shared
 
     @State private var linkInput = ""
     @State private var importing = false
@@ -39,7 +38,6 @@ struct LuoxueSourcesPage: View {
     var body: some View {
         Form {
             onlineImportSection
-            headersSection
             installedSection
             activityLogSection
         }
@@ -94,37 +92,6 @@ struct LuoxueSourcesPage: View {
     }
 
     // MARK: - 在线导入
-
-    /// 播放请求头：网盘类音源返回的链接常要求特定 User-Agent / Referer /
-    /// Cookie 才肯出数据，这里一次配好，播放和下载都会带上。
-    private var headersSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: "network.badge.shield.half.filled")
-                        .foregroundStyle(Theme.accent)
-                    Text("播放请求头（网盘源需要）")
-                        .font(.subheadline.weight(.semibold))
-                }
-                TextField(
-                    String(localized: "每行一个，格式 Key: Value"),
-                    text: $settings.customSourceHeaders,
-                    axis: .vertical
-                )
-                #if os(iOS)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                #endif
-                .font(.caption.monospaced())
-                .lineLimit(3...8)
-
-                Text("播放和下载自定义源歌曲时附带这些请求头。例如：\nUser-Agent: Mozilla/5.0 (iPhone; …)\nReferer: https://…/\n未填写时默认使用 lx-music-mobile 的 UA。")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.vertical, 2)
-        }
-    }
 
     private var activityLogSection: some View {
         Section(String(localized: "导入记录")) {
@@ -209,18 +176,6 @@ struct LuoxueSourcesPage: View {
                         busy: checking)
                 }
 
-                Text("本地导入支持文件多选导入，或直接选择整个文件夹批量导入")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-
-                // Build marker: lets the user confirm which build is running.
-                Text("当前构建：2026-11-10.12（落雪自定义音源引擎一比一复刻自畅怡守：单上下文多脚本、逐音质逐源回退、请求链接捕获兜底）")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-
-                Text("备用方式：在系统“文件”App 里长按 .js 音源 → 分享 → 零音乐，可直接导入")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
             .padding(.vertical, 2)
         }
@@ -351,24 +306,31 @@ struct LuoxueSourcesPage: View {
         Task {
             defer { importing = false }
             let result = await manager.installLocalBatch(scriptsAt: urls)
-            logActivity("完成：成功 \(result.installed) 个，失败 \(result.failures.count) 个")
-            if result.failures.isEmpty {
-                if result.installed > 0 {
-                    importAlertMessage = String(localized: "已导入 \(result.installed) 个音源，请稍候其在列表中完成加载")
-                    showImportAlert = true
-                } else {
-                    // Never silent: an empty result means nothing was even read.
-                    importAlertMessage = String(localized: "没有读取到任何脚本文件，请确认选择的是 .js 文件")
-                    showImportAlert = true
-                }
-            } else {
-                for failure in result.failures {
-                    logActivity("失败：\(failure.name) — \(failure.error)")
-                }
-                let names = result.failures.map(\.name).joined(separator: "、")
-                importAlertMessage = String(localized: "已导入 \(result.installed) 个，失败 \(result.failures.count) 个：\(names)")
-                showImportAlert = true
+            logActivity("完成：成功 \(result.installed) 个，跳过重复 \(result.skipped.count) 个，失败 \(result.failures.count) 个")
+            for skipped in result.skipped {
+                logActivity("跳过：\(skipped)")
             }
+            for failure in result.failures {
+                logActivity("失败：\(failure.name) — \(failure.error)")
+            }
+            var parts: [String] = []
+            if result.installed > 0 {
+                parts.append(String(localized: "已导入 \(result.installed) 个音源，请稍候其在列表中完成加载"))
+            }
+            if !result.skipped.isEmpty {
+                parts.append(String(localized: "跳过 \(result.skipped.count) 个重复音源"))
+            }
+            if !result.failures.isEmpty {
+                let names = result.failures.map(\.name).joined(separator: "、")
+                parts.append(String(localized: "失败 \(result.failures.count) 个：\(names)"))
+            }
+            if parts.isEmpty {
+                // Never silent: an empty result means nothing was even read.
+                importAlertMessage = String(localized: "没有读取到任何脚本文件，请确认选择的是 .js 文件")
+            } else {
+                importAlertMessage = parts.joined(separator: "，")
+            }
+            showImportAlert = true
         }
     }
 

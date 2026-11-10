@@ -80,7 +80,7 @@ struct LxLoadResult {
 @objc protocol LxBridgeExports: JSExport {
     func consoleLog(_ message: JSValue)
     func httpRequest(_ url: JSValue, _ options: JSValue, _ callback: JSValue)
-    func scriptEvent(_ name: JSValue, _ payload: JSValue)
+    func scriptEvent(_ name: JSValue, _ payload: JSValue, _ scriptId: JSValue)
     func bufferFrom(_ text: JSValue, _ type: JSValue) -> JSValue
     func bufferToString(_ buffer: JSValue, _ type: JSValue) -> JSValue
     func zlibInflate(_ buffer: JSValue) -> JSValue
@@ -158,8 +158,14 @@ final class LxNativeBridge: NSObject, LxBridgeExports {
 
     // MARK: Lifecycle
 
-    func scriptEvent(_ name: JSValue, _ payload: JSValue) {
-        engine?.handleScriptEvent(name.toString() ?? "", payload: payload)
+    func scriptEvent(_ name: JSValue, _ payload: JSValue, _ scriptId: JSValue) {
+        let attributedID: UUID?
+        if scriptId.isString, let text = scriptId.toString(), let parsed = UUID(uuidString: text) {
+            attributedID = parsed
+        } else {
+            attributedID = nil
+        }
+        engine?.handleScriptEvent(name.toString() ?? "", payload: payload, fromScriptID: attributedID)
     }
 
     // MARK: Buffers
@@ -247,6 +253,10 @@ final class LxScriptEngine {
     private var lastCapturedURL: String?
     /// Scripts still waiting on their `inited` event during a `load` call.
     private var pendingScriptIDs: Set<UUID> = []
+    /// Scripts in load order — used to attribute an `inited` event that
+    /// arrived without a script id (a script calling `globalThis.lx` /
+    /// `window.lx` instead of the per-script `lx` it was handed).
+    private var loadOrder: [UUID] = []
     /// Set while a `load` is waiting for scripts to initialize; fires (once)
     /// when every script has reported or the grace period runs out.
     private var loadFinisher: (() -> Void)?
@@ -353,28 +363,33 @@ final class LxScriptEngine {
                 self.pendingScriptIDs = Set(scripts.map(\.id))
 
                 Self.log.info("loadScripts called. count=\(scripts.count, privacy: .public)")
+                self.loadOrder = scripts.map(\.id)
                 for input in scripts {
                     Self.log.info("loading script meta. name=\(input.name, privacy: .public)")
                     self.currentScriptID = input.id
                     self.scriptResults[input.id] = LxScriptResult()
 
                     // Per-script identity, exactly like the reference app:
-                    // globalThis.lx.currentScriptInfo = {…}
+                    // globalThis.lx.currentScriptInfo = {…}. Each script is
+                    // evaluated through __lxWrapScript with its own `lx` — a
+                    // per-script proxy whose `send` stamps every event with
+                    // the script's id, so `inited` reported asynchronously
+                    // (the common case: sources initialize over the network)
+                    // is still attributed to the right source instead of
+                    // being silently dropped.
                     let info: [String: Any] = [
                         "name": input.meta["name"] ?? input.name,
                         "description": input.meta["description"] ?? "",
                         "version": input.meta["version"] ?? "",
                         "author": input.meta["author"] ?? "",
                     ]
-                    if let data = try? JSONSerialization.data(withJSONObject: info),
-                       let json = String(data: data, encoding: .utf8),
-                       let value = JSValue(object: json, in: context) {
-                        context.evaluateScript("globalThis.lx.currentScriptInfo = \(value.toString() ?? "{}")")
-                    }
+                    context.setObject(input.id.uuidString, forKeyedSubscript: "__lxScriptID" as NSString)
+                    context.setObject(info, forKeyedSubscript: "__lxScriptInfo" as NSString)
+                    context.setObject(input.script, forKeyedSubscript: "__lxScriptSource" as NSString)
 
                     // CommonJS scripts expect `module`/`exports` to exist.
                     context.evaluateScript(Self.modulePreludeSource)
-                    context.evaluateScript(input.script)
+                    context.evaluateScript(Self.scriptWrapperSource)
                     // A script that threw is recorded, but the next one still
                     // loads — one bad file never kills the engine.
                     context.evaluateScript(Self.commonJSAdapterSource)
@@ -386,7 +401,9 @@ final class LxScriptEngine {
                 context.evaluateScript(Self.cerumusicCompatSource)
 
                 func finishLoading() {
-                    for id in self.pendingScriptIDs {
+                    for id in self.pendingScriptIDs where self.scriptResults[id]?.error == nil {
+                        // Keep the real exception message when there is one;
+                        // only scripts that stayed silent get the timeout note.
                         self.scriptResults[id]?.error = "script never reported initialization"
                     }
                     let capabilities = self.capabilities
@@ -431,19 +448,33 @@ final class LxScriptEngine {
 
     /// `send(EVENT_NAMES.inited, { status, sources })` and friends. Called by
     /// the native bridge, so not private.
-    func handleScriptEvent(_ name: String, payload: JSValue) {
+    ///
+    /// Attribution: `inited` usually arrives asynchronously (most sources
+    /// initialize over the network), long after `currentScriptID` has moved
+    /// on. The per-script wrapper stamps `send` calls with the script's id
+    /// (`fromScriptID`); synchronous sends fall back to `currentScriptID`;
+    /// anything that bypassed the wrapper (a script using `window.lx`
+    /// directly) is attributed to the oldest script still waiting.
+    func handleScriptEvent(_ name: String, payload: JSValue, fromScriptID explicitID: UUID? = nil) {
         guard let object = payload.toObject() as? [String: Any] else { return }
         switch name {
         case "inited":
+            let ownerID = explicitID
+                ?? currentScriptID
+                ?? loadOrder.first { pendingScriptIDs.contains($0) }
             if let status = object["status"] as? Bool, !status {
-                recordScriptError("script reported status: false")
-                pendingScriptIDs.remove(currentScriptID ?? UUID())
-                maybeFinishLoading()
+                if let id = ownerID {
+                    if scriptResults[id]?.error == nil {
+                        scriptResults[id]?.error = "script reported status: false"
+                    }
+                    pendingScriptIDs.remove(id)
+                    maybeFinishLoading()
+                }
                 return
             }
             // A script without `sources` has still finished initializing.
-            if currentScriptID != nil {
-                pendingScriptIDs.remove(currentScriptID!)
+            if let id = ownerID {
+                pendingScriptIDs.remove(id)
                 maybeFinishLoading()
             }
             guard let sources = object["sources"] as? [String: Any] else { return }
@@ -454,7 +485,7 @@ final class LxScriptEngine {
                 capabilities[key] = qualitys
                 registered.append(key)
             }
-            if let id = currentScriptID {
+            if let id = ownerID {
                 scriptResults[id]?.sources = registered.sorted()
             }
         case "updateAlert", "showConfigView":
@@ -833,7 +864,7 @@ final class LxScriptEngine {
           if (name === EVENT_NAMES.request && typeof handler === 'function') requestHandlers.push(handler)
         },
         send: function(name, data) {
-          bridge.scriptEvent(name, data)
+          bridge.scriptEvent(name, data, null)
         },
         request: function(url, options, callback) {
           bridge.httpRequest(url, options || {}, callback)
@@ -871,6 +902,29 @@ final class LxScriptEngine {
       if (!globalThis.module) globalThis.module = { exports: {} }
       globalThis.exports = globalThis.module.exports
     })();
+    """
+
+    /// Evaluated IN PLACE OF each user script: hands the script its own `lx`
+    /// — a per-script proxy over the shared host API whose `send` stamps the
+    /// script's id onto every event, so `inited` reported asynchronously
+    /// (after network init) is attributed to the right source. Free `lx`
+    /// references inside the script — including inside async callbacks —
+    /// resolve to the proxy through the closure scope. `currentScriptInfo`
+    /// is the real object (not a JSON string), matching the reference app.
+    private static let scriptWrapperSource = """
+    (function() {
+      var source = globalThis.__lxScriptSource
+      if (typeof source !== 'string' || source.length === 0) return
+      var info = globalThis.__lxScriptInfo || {}
+      var scriptId = globalThis.__lxScriptID || null
+      var env = Object.create(globalThis.lx)
+      env.currentScriptInfo = info
+      globalThis.lx.currentScriptInfo = info
+      env.send = function(name, data) {
+        globalThis.__lxBridge.scriptEvent(name, data, scriptId)
+      }
+      new Function('lx', source)(env)
+    })()
     """
 
     /// Evaluated AFTER each user script: adapts CommonJS-style plugins

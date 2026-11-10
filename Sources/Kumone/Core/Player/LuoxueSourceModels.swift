@@ -19,6 +19,10 @@ struct LuoxueInstalledSource: Codable, Identifiable, Equatable {
     var filePath: String
     /// Whether the source participates in resolution.
     var enabled: Bool
+    /// SHA-256 of the normalized script content — duplicate-import
+    /// detection. Optional so manifests written before this field exists
+    /// still decode.
+    var contentHash: String?
     /// When the source was installed (newest last).
     var addedAt: Date
 
@@ -28,6 +32,7 @@ struct LuoxueInstalledSource: Codable, Identifiable, Equatable {
         originURL: String? = nil,
         filePath: String,
         enabled: Bool = true,
+        contentHash: String? = nil,
         addedAt: Date = Date()
     ) {
         self.id = id
@@ -35,6 +40,7 @@ struct LuoxueInstalledSource: Codable, Identifiable, Equatable {
         self.originURL = originURL
         self.filePath = filePath
         self.enabled = enabled
+        self.contentHash = contentHash
         self.addedAt = addedAt
     }
 

@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import CryptoKit
 import os.log
 
 /// Owns the installed Luoxue (落雪 / LX Music) custom-source scripts:
@@ -46,6 +47,7 @@ final class LuoxueSourceManager: ObservableObject {
         case tooLarge
         case notJavaScript
         case noScriptsInFolder
+        case duplicate(existingName: String)
 
         var errorDescription: String? {
             switch self {
@@ -55,6 +57,7 @@ final class LuoxueSourceManager: ObservableObject {
             case .tooLarge: return String(localized: "脚本文件过大（上限 10 MB）")
             case .notJavaScript: return String(localized: "内容不像 JavaScript 脚本")
             case .noScriptsInFolder: return String(localized: "文件夹里没有 .js 脚本")
+            case .duplicate(let existingName): return String(localized: "音源重复：与已导入的「\(existingName)」内容相同，已跳过")
             }
         }
     }
@@ -190,6 +193,38 @@ final class LuoxueSourceManager: ObservableObject {
         }
     }
 
+    // MARK: - Duplicate detection
+
+    /// Content fingerprint for duplicate detection: SHA-256 over the script
+    /// with line endings unified and surrounding whitespace stripped, so
+    /// files that differ only by CRLF vs LF or a trailing newline still match.
+    private static func scriptFingerprint(_ script: String) -> String {
+        let normalized = script
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return SHA256.hash(data: Data(normalized.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    /// The display name of an installed source whose script content matches,
+    /// or nil when this script is new. Entries installed before the
+    /// `contentHash` field existed are hashed from their stored file on the
+    /// fly.
+    private func existingDuplicate(of script: String) -> String? {
+        let fingerprint = Self.scriptFingerprint(script)
+        for entry in entries {
+            if let stored = entry.source.contentHash {
+                if stored == fingerprint { return entry.source.name }
+            } else if let text = try? String(contentsOfFile: entry.source.filePath, encoding: .utf8),
+                      Self.scriptFingerprint(text) == fingerprint {
+                return entry.source.name
+            }
+        }
+        return nil
+    }
+
     // MARK: - Auto load
 
     /// Loads every enabled script into the shared engine once, after the
@@ -241,7 +276,7 @@ final class LuoxueSourceManager: ObservableObject {
     /// a picked folder — and reading its children — is silently refused by the
     /// sandbox without it, which used to make 本地导入 fail wholesale.
     @discardableResult
-    func installLocalBatch(scriptsAt urls: [URL]) async -> (installed: Int, failures: [(name: String, error: String)]) {
+    func installLocalBatch(scriptsAt urls: [URL]) async -> (installed: Int, skipped: [String], failures: [(name: String, error: String)]) {
         var picked: [(name: String, data: Data)] = []
         var failures: [(name: String, error: String)] = []
 
@@ -274,15 +309,20 @@ final class LuoxueSourceManager: ObservableObject {
         }
 
         var installed = 0
+        var skipped: [String] = []
         for item in picked {
             do {
                 try await install(data: item.data, name: item.name, originURL: nil)
                 installed += 1
+            } catch ImportError.duplicate(let existingName) {
+                // Duplicate content: keep exactly one copy, report the skip
+                // separately from real failures.
+                skipped.append("\(item.name)（与「\(existingName)」相同）")
             } catch {
                 failures.append((item.name, error.localizedDescription))
             }
         }
-        return (installed, failures)
+        return (installed, skipped, failures)
     }
 
     /// Imports a script handed to the app by the system — the Files app's
@@ -410,11 +450,19 @@ final class LuoxueSourceManager: ObservableObject {
             throw ImportError.notJavaScript
         }
 
+        // Duplicate-import detection: identical content (modulo line endings
+        // and surrounding whitespace) is imported once, no matter how many
+        // copies are picked or pasted.
+        if let existingName = existingDuplicate(of: script) {
+            throw ImportError.duplicate(existingName: existingName)
+        }
+
         let source = LuoxueInstalledSource(
             name: LuoxueScriptMetadata.name(in: script, fallback: name),
             originURL: originURL,
             filePath: scriptsDirectory.appendingPathComponent("\(UUID().uuidString).js").path,
-            enabled: true)
+            enabled: true,
+            contentHash: Self.scriptFingerprint(script))
         do {
             try script.data(using: .utf8)?.write(to: source.fileURL, options: .atomic)
         } catch {
@@ -632,13 +680,9 @@ final class LuoxueSourceManager: ObservableObject {
         + "lx-music-mobile/2.12.0 Mobile Safari/605.1.15"
 
     /// Headers every custom-source request carries: the LX mobile UA first,
-    /// overridden by the user's 设置 headers, overridden by whatever the
-    /// script itself returned for this link.
+    /// overridden by whatever the script itself returned for this link.
     static func mergedPlaybackHeaders(scriptHeaders: [String: String]) -> [String: String] {
         var headers = ["User-Agent": playbackUserAgent]
-        for (name, value) in SettingsManager.shared.parsedCustomSourceHeaders {
-            headers[name] = value
-        }
         for (name, value) in scriptHeaders {
             headers[name] = value
         }

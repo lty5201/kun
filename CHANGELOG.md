@@ -7,6 +7,36 @@
 `---` 分隔，随后是完整的**中文**部分（`### 新增` / `### 修复` / `### 改进`）。英文块与中文块
 的条目一一对应、顺序一致。（0.3.19 起采用此双语分块格式；更早的版本沿用旧的中英交替格式。）
 
+## 0.4.3 - 2026-11-10
+
+### Fixed
+
+- **Custom sources (iOS)**: locally imported sources that report `inited` asynchronously (most real sources initialize over the network) were marked 载入失败 even though they registered their sources correctly — the event could no longer be attributed to its script once evaluation moved on. Each script now runs with its own `lx` proxy whose `send` stamps the script's id onto every event, so asynchronous initialization is attributed correctly; a script that bypasses the proxy (via `window.lx`) is attributed to the oldest script still waiting. `lx.currentScriptInfo` is now the real object (not a JSON string), matching the reference app.
+
+### Added
+
+- **Imports**: duplicate-source detection — a script whose content matches an installed one (line endings and surrounding whitespace ignored) is imported only once; local batch imports report skipped duplicates separately from failures.
+
+### Changed
+
+- **Settings**: the 播放请求头 field and the import-hint texts on the custom-source page were removed; playback and downloads keep using the lx-music-mobile User-Agent by default plus whatever headers the source script itself returns.
+
+---
+
+### 修复
+
+- **自定义音源（iOS）**：本地导入后异步上报 `inited` 的音源（多数真实音源需联网初始化）此前即使成功注册来源也会被标记为载入失败——脚本执行结束后事件已无法归属到对应脚本。现在每个脚本都通过自己的 `lx` 代理运行，`send` 时带上脚本标识，异步初始化也能正确归属；绕过代理（直接用 `window.lx`）的脚本会归属到仍在等待的最靠前脚本。`lx.currentScriptInfo` 也改为真实对象（此前是 JSON 字符串），与参考应用一致。
+
+### 新增
+
+- **导入**：重复音源检测——内容与已导入音源相同（忽略换行符与首尾空白）的脚本只导入一份；本地批量导入时跳过的重复项会与失败项分开提示。
+
+### 改进
+
+- **设置**：移除自定义源页面的“播放请求头”输入框与各条导入提示文字；播放与下载仍默认使用 lx-music-mobile 的 User-Agent，并附带音源脚本自己返回的请求头。
+
+---
+
 ## 0.4.2 - 2026-11-10
 
 ### Improved
