@@ -2,6 +2,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
+#else
+import UIKit
 #endif
 
 /// 自定义源管理：导入兼容 lx-music 格式的第三方音源脚本。
@@ -29,7 +31,17 @@ struct LuoxueSourcesPage: View {
         .navigationTitle(String(localized: "自定义源管理"))
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
-        #endif
+        // SwiftUI's fileImporter silently drops its completion when the picker
+        // is dismissed from a page nested in a sheet's NavigationStack — the
+        // picker opens, a file is chosen, and nothing happens. The UIKit
+        // document picker's delegate always fires, so 本地导入 uses it instead.
+        .sheet(isPresented: $showingFileImporter) {
+            IOSDocumentPicker(onPick: { urls in
+                guard !urls.isEmpty else { return }
+                importLocalBatch(urls)
+            })
+        }
+        #else
         .fileImporter(
             isPresented: $showingFileImporter,
             // .folder so whole folders of scripts are pickable, matching the
@@ -45,6 +57,7 @@ struct LuoxueSourcesPage: View {
                 break
             }
         }
+        #endif
         .onAppear {
             _ = manager.ensureLoadedFromSettings()
         }
@@ -220,6 +233,9 @@ struct LuoxueSourcesPage: View {
             if result.failures.isEmpty {
                 if result.installed > 0 {
                     ToastCenter.shared.show(String(localized: "已导入 \(result.installed) 个音源"))
+                } else {
+                    // Never silent: an empty result means nothing was even read.
+                    errorMessage = String(localized: "没有读取到任何脚本文件，请确认选择的是 .js 文件")
                 }
             } else {
                 let names = result.failures.map(\.name).joined(separator: "、")
@@ -350,6 +366,44 @@ private struct LuoxueSourceRow: View {
         }
     }
 }
+
+#if os(iOS)
+/// The system document picker on iOS: SwiftUI's `fileImporter` can silently
+/// swallow the picked file on a page presented inside a sheet's navigation
+/// stack, while `UIDocumentPickerViewController`'s delegate callback is
+/// reliable. Presented as a sheet, so it never depends on the enclosing
+/// presentation context.
+private struct IOSDocumentPicker: UIViewControllerRepresentable {
+    let onPick: ([URL]) -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: [.item, .folder], asCopy: false)
+        picker.allowsMultipleSelection = true
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: ([URL]) -> Void
+
+        init(onPick: @escaping ([URL]) -> Void) {
+            self.onPick = onPick
+        }
+
+        func documentPicker(
+            _ controller: UIDocumentPickerViewController,
+            didPickDocumentsAt urls: [URL]
+        ) {
+            onPick(urls)
+        }
+    }
+}
+#endif
 
 #if DEBUG
 #Preview("LuoxueSourcesPage") {

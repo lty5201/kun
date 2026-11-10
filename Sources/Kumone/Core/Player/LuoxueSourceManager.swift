@@ -225,10 +225,10 @@ final class LuoxueSourceManager: ObservableObject {
                         .sorted { $0.lastPathComponent < $1.lastPathComponent }
                     guard !children.isEmpty else { throw ImportError.noScriptsInFolder }
                     for child in children {
-                        picked.append((name: child.lastPathComponent, data: try Data(contentsOf: child)))
+                        picked.append((name: child.lastPathComponent, data: try Self.readPickedFile(child)))
                     }
                 } else {
-                    picked.append((name: url.lastPathComponent, data: try Data(contentsOf: url)))
+                    picked.append((name: url.lastPathComponent, data: try Self.readPickedFile(url)))
                 }
             } catch {
                 failures.append((url.lastPathComponent, error.localizedDescription))
@@ -251,9 +251,32 @@ final class LuoxueSourceManager: ObservableObject {
     func installLocal(scriptAt url: URL) async throws {
         let accessing = url.startAccessingSecurityScopedResource()
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-        let data = try Data(contentsOf: url)
+        let data = try Self.readPickedFile(url)
         let name = url.lastPathComponent
         try await install(data: data, name: name, originURL: nil)
+    }
+
+    /// Reads a file picked from the document picker. A plain
+    /// `Data(contentsOf:)` fails on iCloud Drive placeholders ("no such
+    /// file"); the coordinated read lets the file provider download the item
+    /// first, and is also the retry path when the plain read fails.
+    private static func readPickedFile(_ url: URL) throws -> Data {
+        if let data = try? Data(contentsOf: url), !data.isEmpty {
+            return data
+        }
+        var data: Data?
+        var coordinatorError: Error?
+        let coordinator = NSFileCoordinator()
+        coordinator.coordinate(readingItemAt: url, options: [], error: &coordinatorError) { readURL in
+            data = try? Data(contentsOf: readURL)
+        }
+        if let data, !data.isEmpty {
+            return data
+        }
+        if let coordinatorError { throw coordinatorError }
+        throw CocoaError(.fileReadNoSuchFile, userInfo: [
+            NSFilePathErrorKey: url.path,
+        ])
     }
 
     /// Downloads and installs a script from a URL (在线导入). GitHub / Gitee /
