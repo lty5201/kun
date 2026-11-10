@@ -619,8 +619,9 @@ final class SettingsManager: ObservableObject {
 
     private init() {
         let defaults = UserDefaults.standard
-        audioQuality = defaults.string(forKey: Keys.quality).flatMap(AudioQuality.init) ?? .exhigh
-        downloadQuality = defaults.string(forKey: Keys.downloadQuality).flatMap(AudioQuality.init) ?? audioQuality
+        let storedQuality = defaults.string(forKey: Keys.quality).flatMap(AudioQuality.init) ?? .exhigh
+        audioQuality = storedQuality
+        downloadQuality = defaults.string(forKey: Keys.downloadQuality).flatMap(AudioQuality.init) ?? storedQuality
         enableAudioCache = defaults.object(forKey: Keys.enableAudioCache) as? Bool ?? true
         // A size somebody chose stays chosen; the untouched default becomes automatic.
         audioCacheAutomatic = defaults.object(forKey: Keys.audioCacheAutomatic) as? Bool
