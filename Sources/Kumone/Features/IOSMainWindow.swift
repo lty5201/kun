@@ -56,6 +56,13 @@ public struct IOSMainWindow: View {
             .environment(\.openLogin, { showLogin = true })
             .environment(\.presentSettingsSheet, { showSettings = true })
             .environment(\.openDestination, openDestination)
+            // Files app ▸ 长按 .js ▸ 分享 ▸ 零音乐: import the script directly.
+            .onOpenURL { url in
+                Task {
+                    let message = await LuoxueSourceManager.shared.importOpenedFile(at: url)
+                    toasts.show(message)
+                }
+            }
             .modifier(PlaybackLifecycle())
             .task {
                 await DownloadManager.shared.start()

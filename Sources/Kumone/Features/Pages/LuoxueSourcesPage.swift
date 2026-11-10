@@ -181,7 +181,11 @@ struct LuoxueSourcesPage: View {
                     .foregroundStyle(.tertiary)
 
                 // Build marker: lets the user confirm which build is running.
-                Text("当前构建：2026-11-10.6（导入修复版）")
+                Text("当前构建：2026-11-10.7（导入修复版）")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+
+                Text("备用方式：在系统“文件”App 里长按 .js 音源 → 分享 → 零音乐，可直接导入")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -278,22 +282,32 @@ struct LuoxueSourcesPage: View {
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene }).first,
             let window = scene.windows.first(where: \.isKeyWindow) ?? scene.windows.first,
-            let root = window.rootViewController else { return }
+            let root = window.rootViewController else {
+            logActivity("错误：找不到窗口控制器")
+            return
+        }
 
         var top = root
         while let presented = top.presentedViewController { top = presented }
 
+        // asCopy: true — the system copies the picked files into the app's
+        // tmp first, so reading them needs no security scope and cannot fail
+        // on provider quirks.
         let picker = UIDocumentPickerViewController(
-            forOpeningContentTypes: [.item, .folder], asCopy: false)
+            forOpeningContentTypes: [.item, .folder], asCopy: true)
         picker.allowsMultipleSelection = true
         let presenter = IOSPickerPresenter.shared
         presenter.onPick = { urls in
+            logActivity("系统回调：收到 \(urls.count) 个文件")
             guard !urls.isEmpty else { return }
             importLocalBatch(urls)
         }
+        presenter.onCancel = { logActivity("已取消选择") }
         picker.delegate = presenter
-        top.present(picker, animated: true)
-        logActivity("已打开文件选择器")
+        top.present(picker, animated: true) {
+            logActivity("选择器已显示在屏幕上")
+        }
+        logActivity("已请求弹出选择器（顶层：\(String(describing: type(of: top)))）")
     }
     #endif
 
@@ -455,18 +469,26 @@ private struct LuoxueSourceRow: View {
 private final class IOSPickerPresenter: NSObject, UIDocumentPickerDelegate {
     static let shared = IOSPickerPresenter()
     var onPick: (([URL]) -> Void)?
+    var onCancel: (() -> Void)?
 
     func documentPicker(
         _ controller: UIDocumentPickerViewController,
         didPickDocumentsAt urls: [URL]
     ) {
         let callback = onPick
-        onPick = nil
+        clear()
         callback?(urls)
     }
 
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        let callback = onCancel
+        clear()
+        callback?()
+    }
+
+    private func clear() {
         onPick = nil
+        onCancel = nil
     }
 }
 #endif

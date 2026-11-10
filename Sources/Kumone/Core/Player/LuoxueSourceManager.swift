@@ -247,6 +247,27 @@ final class LuoxueSourceManager: ObservableObject {
         return (installed, failures)
     }
 
+    /// Imports a script handed to the app by the system — the Files app's
+    /// 长按 → 分享 → 零音乐 (Open In) path, registered via
+    /// CFBundleDocumentTypes. Returns a user-facing result message.
+    @discardableResult
+    func importOpenedFile(at url: URL) async -> String {
+        guard url.pathExtension.lowercased() == "js" else {
+            return String(localized: "只支持导入 .js 音源脚本")
+        }
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let data = try Self.readPickedFile(url)
+            let script = String(data: data, encoding: .utf8) ?? ""
+            try await install(data: data, name: url.lastPathComponent, originURL: nil)
+            let name = LuoxueScriptMetadata.name(in: script, fallback: url.lastPathComponent)
+            return String(localized: "已导入音源：\(name)")
+        } catch {
+            return String(localized: "导入失败：\(error.localizedDescription)")
+        }
+    }
+
     /// Imports a script from a local file (fileImporter / 本地导入).
     func installLocal(scriptAt url: URL) async throws {
         let accessing = url.startAccessingSecurityScopedResource()
