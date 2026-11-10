@@ -38,6 +38,8 @@ struct SettingsSheet: View {
                         }
                     case .lyrics:
                         LyricsSettingsPage()
+                    case .luoxueSources:
+                        LuoxueSourcesPage()
                     case .soundEffects:
                         SoundEffectsPage()
                     }
@@ -51,29 +53,25 @@ struct SettingsView: View {
     @EnvironmentObject private var settings: SettingsManager
     @EnvironmentObject private var account: AccountStore
     @ObservedObject private var luoxue = LuoxueSourceManager.shared
-    @State private var showingLuoxueImporter = false
     @Environment(\.openDestination) private var openDestination
     #if os(macOS)
     @AppStorage(SettingsManager.Keys.menuBarPlayer) private var showMenuBarPlayer = false
     @State private var navigationPath: [SettingsPage] = []
     #endif
 
-    private var luoxueStatusText: String {
-        switch luoxue.state {
-        case .idle:
-            return String(localized: "未选择脚本")
-        case .loading:
-            return String(localized: "载入中…")
-        case .ready(let sources):
-            return String(localized: "已载入（\(sources.joined(separator: "、"))）")
-        case .failed(let message):
-            return String(localized: "载入失败：\(message)")
-        }
+    /// One-line summary of the installed Luoxue sources, shown on the
+    /// 自定义源管理 row.
+    private var luoxueSummaryText: String {
+        let entries = luoxue.entries
+        if entries.isEmpty { return String(localized: "未导入") }
+        let enabled = entries.filter(\.enabled).count
+        return String(localized: "\(entries.count) 个源，\(enabled) 个启用")
     }
 
     fileprivate enum SettingsPage: Hashable {
         case storage
         case lyrics
+        case luoxueSources
         #if os(iOS)
         case soundEffects
         #endif
@@ -143,46 +141,21 @@ struct SettingsView: View {
             // is the only music source left in the app, so hiding its entry
             // behind another toggle made the app look like it had no source
             // management at all.
-            Section {
-                Button {
-                    showingLuoxueImporter = true
-                } label: {
+            Section("自定义源") {
+                NavigationLink(value: SettingsPage.luoxueSources) {
                     HStack {
-                        Text("落雪自定义源")
+                        Label("自定义源管理", systemImage: "music.note.list")
                         Spacer()
-                        Text(luoxueStatusText)
+                        Text(luoxueSummaryText)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
                 }
-                .accessibilityIdentifier("settingsLuoxueScriptButton")
-                if luoxue.needsReload {
-                    Button("重新载入脚本") {
-                        Task { await luoxue.reload() }
-                    }
-                }
-                Text("选择落雪音乐（LX Music）自定义源脚本（.js 文件）。脚本仅在本机运行，用于解析无版权或试听歌曲的播放地址。")
+                .accessibilityIdentifier("settingsLuoxueSourcesButton")
+                Text("导入兼容 lx-music 格式的第三方音源脚本，支持本地批量导入与在线直链导入。脚本仅在本机运行，用于解析无版权或试听歌曲的播放地址。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } header: {
-                Text("自定义源")
-            }
-            .fileImporter(
-                isPresented: $showingLuoxueImporter,
-                allowedContentTypes: [.item],
-                allowsMultipleSelection: false
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    guard let url = urls.first else { return }
-                    Task { await luoxue.install(scriptAt: url) }
-                case .failure:
-                    break
-                }
-            }
-            .onAppear {
-                _ = LuoxueSourceManager.shared.ensureLoadedFromSettings()
             }
 
             // Flutify lyrics settings entry — always visible, never hidden.
@@ -350,6 +323,8 @@ struct SettingsView: View {
                     }
                 case .lyrics:
                     LyricsSettingsPage()
+                case .luoxueSources:
+                    LuoxueSourcesPage()
                 case .shortcuts:
                     ShortcutSettingsView()
                 }
@@ -361,6 +336,7 @@ struct SettingsView: View {
                     switch page {
                     case .storage: Text("存储空间").font(.headline)
                     case .lyrics: Text("歌词").font(.headline)
+                    case .luoxueSources: Text("自定义源管理").font(.headline)
                     case .shortcuts: Text("快捷键").font(.headline)
                     }
                 }

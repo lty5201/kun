@@ -359,18 +359,8 @@ final class SettingsManager: ObservableObject {
         didSet { UserDefaults.standard.set(enableUnblock, forKey: Keys.unblock) }
     }
 
-    /// Path of the installed Luoxue custom source script.
-    @Published var luoxueScriptPath: String? {
-        didSet {
-            guard luoxueScriptPath != oldValue else { return }
-            if let luoxueScriptPath {
-                UserDefaults.standard.set(luoxueScriptPath, forKey: Keys.luoxueScriptPath)
-            } else {
-                UserDefaults.standard.removeObject(forKey: Keys.luoxueScriptPath)
-            }
-        }
-    }
-
+    /// Whether gray tracks can be resolved: unblock enabled and at least one
+    /// Luoxue custom source loaded.
     var canResolveUnblockedTracks: Bool {
         LuoxueSourceManager.shared.ensureLoadedFromSettings()
         return enableUnblock && LuoxueSourceManager.shared.isReady
@@ -561,7 +551,6 @@ final class SettingsManager: ObservableObject {
         lyricsAnnotation = defaults.string(forKey: Keys.annotation).flatMap(LyricsAnnotation.init)
             ?? (defaults.bool(forKey: Keys.showRomaji) ? .romaji : .off)
         enableUnblock = defaults.object(forKey: Keys.unblock) as? Bool ?? true
-        luoxueScriptPath = defaults.string(forKey: Keys.luoxueScriptPath)
         autoCheckUpdates = defaults.object(forKey: Keys.autoCheckUpdates) as? Bool ?? true
         showDesktopLyrics = defaults.object(forKey: Keys.desktopLyrics) as? Bool ?? false
         #if os(macOS)
