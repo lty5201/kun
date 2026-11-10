@@ -7,6 +7,28 @@
 `---` 分隔，随后是完整的**中文**部分（`### 新增` / `### 修复` / `### 改进`）。英文块与中文块
 的条目一一对应、顺序一致。（0.3.19 起采用此双语分块格式；更早的版本沿用旧的中英交替格式。）
 
+## 0.4.1 - 2026-11-10
+
+### Fixed
+
+- **Playback (iOS)**: custom-source streams from 网盘 (cloud-drive) sources failed with a bare "无法播放" — the resolved link only answers to the headers the source script used when fetching it, and AVPlayer sent none. The resolver now forwards a script's `{ url, headers }` answer and the media requests carry those headers (defaulting to the lx-music-mobile User-Agent, which 网盘 hosts accept). Playback is proxied through the resource loader even with the song cache off, so the headers reach every byte-range request.
+- **Downloads**: VIP / gray songs the service refuses a download URL for now download through the custom source instead of failing outright — the file is fetched with the source's headers, fingerprinted (MD5, size, decoded duration) and imported through the same verification and library path as an official download.
+
+### Added
+
+- **Settings**: a 播放请求头 field on the custom-source page — one `Key: value` per line (User-Agent / Referer / Cookie …), attached to every custom-source playback and download request; headers returned by the script itself take precedence.
+
+### 修复
+
+- **播放（iOS）**：网盘类自定义源解析成功却播放失败（提示"无法播放"）——网盘链接只认音源脚本取链接时用的请求头，而 AVPlayer 一个都没带。解析器现在会读取脚本返回的 `{ url, headers }` 并在所有媒体请求中附带这些头（默认使用网盘普遍放行的 lx-music-mobile User-Agent）；即使歌曲缓存关闭，播放也会经资源加载器代理转发，保证每个分片请求都带头。
+- **下载**：官方接口拒绝提供下载地址的 VIP / 灰色歌曲，现在改走自定义源下载，不再直接失败——文件按源要求的请求头获取，校验指纹（MD5、大小、解码时长）后走与官方下载完全相同的入库校验流程。
+
+### 新增
+
+- **设置**：自定义源页面新增"播放请求头"输入框——每行一条 `Key: value`（User-Agent / Referer / Cookie 等），播放与下载自定义源歌曲时统一附带；脚本自身返回的请求头优先级更高。
+
+---
+
 ## 0.4.0 - 2026-11-10
 
 ### Changed

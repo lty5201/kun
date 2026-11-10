@@ -19,4 +19,8 @@ struct ResolvedAudioSource {
     let id: AudioSourceID
     let displayName: String
     let url: URL
+    /// Headers the resolved server expects (User-Agent / Referer / Cookie …).
+    /// 网盘-style sources serve links that 403 without them, so they ride
+    /// along with the URL and are attached to every playback/download request.
+    let headers: [String: String]? = nil
 }

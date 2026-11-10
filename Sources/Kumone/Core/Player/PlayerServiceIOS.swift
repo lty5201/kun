@@ -925,7 +925,8 @@ final class PlayerService: ObservableObject {
             url: unblocked.url,
             durationMS: nil,
             generation: generation,
-            resumeAt: resumeAt
+            resumeAt: resumeAt,
+            headers: unblocked.headers
         )
         guard case .loaded = loadResult else { return false }
 
@@ -958,15 +959,25 @@ final class PlayerService: ObservableObject {
         url: URL,
         durationMS: Int?,
         generation: Int,
-        resumeAt: TimeInterval = 0
+        resumeAt: TimeInterval = 0,
+        headers: [String: String]? = nil
     ) async -> ResolvedURLLoadResult {
         // Skip a CDN host that just failed to connect (see CDNHost).
         let remote = CDNHost.preferred(for: url)
 
         var asset = AVURLAsset(url: remote)
         var resourceLoader: CachingAudioResourceLoader?
-        if SettingsManager.shared.enableAudioCache, !isTrial {
-            let cacheLimitMB = await SettingsManager.shared.effectiveAudioCacheSizeMB()
+        // A custom-source stream (网盘 links) is proxied through the resource
+        // loader even with the song cache off: the loader is what attaches
+        // the headers the file host insists on — AVPlayer alone gets 403.
+        // With caching off the limit is 0, which makes the loader stream
+        // through without writing anything.
+        let wantsCaching = SettingsManager.shared.enableAudioCache && !isTrial
+        let needsHeaderProxy = !(headers ?? [:]).isEmpty
+        if wantsCaching || needsHeaderProxy {
+            let cacheLimitMB = wantsCaching
+                ? await SettingsManager.shared.effectiveAudioCacheSizeMB()
+                : 0
             guard generation == resolveGeneration else { return .superseded }
             let source: AudioCacheSource = unblockSource.map(AudioCacheSource.unblock) ?? .origin
             do {
@@ -976,7 +987,8 @@ final class PlayerService: ObservableObject {
                     requestedQuality: SettingsManager.shared.audioQuality.rawValue,
                     servedQuality: servedQuality,
                     source: source,
-                    maximumCacheSizeMB: cacheLimitMB
+                    maximumCacheSizeMB: cacheLimitMB,
+                    headers: headers ?? [:]
                 )
                 guard generation == resolveGeneration else {
                     loader.cancel()

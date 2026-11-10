@@ -573,6 +573,28 @@ final class LuoxueSourceManager: ObservableObject {
 
     // MARK: - Resolution
 
+    /// The UA presented to the file host when playing a custom-source stream.
+    /// AVPlayer's own UA (`AppleCoreMedia/…`) is refused by many 网盘 hosts;
+    /// the LX mobile UA is what the script itself fetched the link with.
+    static let playbackUserAgent =
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+        + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        + "lx-music-mobile/2.12.0 Mobile Safari/605.1.15"
+
+    /// Headers every custom-source request carries: the LX mobile UA first,
+    /// overridden by the user's 设置 headers, overridden by whatever the
+    /// script itself returned for this link.
+    static func mergedPlaybackHeaders(scriptHeaders: [String: String]) -> [String: String] {
+        var headers = ["User-Agent": playbackUserAgent]
+        for (name, value) in SettingsManager.shared.parsedCustomSourceHeaders {
+            headers[name] = value
+        }
+        for (name, value) in scriptHeaders {
+            headers[name] = value
+        }
+        return headers
+    }
+
     /// Resolves a gray track's stream URL through the enabled sources, in
     /// list order; the first script that produces a URL wins.
     func resolve(track: Track) async throws -> ResolvedAudioSource? {
@@ -591,11 +613,12 @@ final class LuoxueSourceManager: ObservableObject {
             var sourceFailures: [String] = []
             for quality in candidates {
                 do {
-                    let url = try await runtime.resolveMusicURL(source: "wy", songID: track.id, quality: quality)
+                    let resolved = try await runtime.resolveMusicURL(source: "wy", songID: track.id, quality: quality)
                     return ResolvedAudioSource(
                         id: .luoxue,
                         displayName: AudioSourceID.luoxue.displayName,
-                        url: url)
+                        url: resolved.url,
+                        headers: Self.mergedPlaybackHeaders(scriptHeaders: resolved.headers))
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {

@@ -31,6 +31,14 @@ enum LuoxueScriptError: LocalizedError {
     }
 }
 
+/// A resolved stream: the URL plus any headers the server insists on.
+/// 网盘 sources often answer with `{ url, headers }` — the link only plays
+/// when those headers (User-Agent / Referer / Cookie) ride along.
+struct LuoxueResolvedMusic: Sendable {
+    let url: URL
+    let headers: [String: String]
+}
+
 // MARK: - JSExport bridges
 
 /// Native surface the Luoxue (LX Music) user script talks to. Every method is
@@ -406,8 +414,8 @@ final class LuoxueScriptRuntime {
         }
     }
 
-    func resolveMusicURL(source: String, songID: Int, quality: String, timeout: TimeInterval = 20) async throws -> URL {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+    func resolveMusicURL(source: String, songID: Int, quality: String, timeout: TimeInterval = 20) async throws -> LuoxueResolvedMusic {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<LuoxueResolvedMusic, Error>) in
             queue.async { [weak self] in
                 guard let self, let context = self.context else {
                     continuation.resume(throwing: LuoxueScriptError.notLoaded)
@@ -792,7 +800,9 @@ private extension LuoxueScriptRuntime {
             var musicInfo = (payload.info && payload.info.musicInfo) || {}
             return Promise.resolve(exp.musicUrl(payload.source, musicInfo, quality)).then(function(res) {
               if (typeof res === 'string') return res
-              if (res && typeof res.url === 'string') return res.url
+              // Objects keep their headers ({url, headers}) so the host can
+              // attach them to the media requests.
+              if (res && typeof res.url === 'string') return res
               return ''
             })
           })
@@ -807,7 +817,7 @@ private extension LuoxueScriptRuntime {
 /// Guards one-shot continuation resume; all settlements happen on the queue.
 final class LuoxueSettlementBox: @unchecked Sendable {
     private var settled = false
-    var finish: ((Result<URL, Error>) -> Void)?
+    var finish: ((Result<LuoxueResolvedMusic, Error>) -> Void)?
 
     func succeed(_ value: JSValue) {
         guard !settled else { return }
@@ -815,11 +825,25 @@ final class LuoxueSettlementBox: @unchecked Sendable {
         if let urlString = Self.urlString(from: value),
            let url = Self.makeURL(from: urlString),
            url.scheme == "http" || url.scheme == "https" {
-            finish?(.success(url))
+            finish?(.success(LuoxueResolvedMusic(url: url, headers: Self.headers(from: value))))
         } else {
             let raw = value.isString ? (value.toString() ?? "") : "non-string result"
             finish?(.failure(LuoxueScriptError.invalidURL(raw)))
         }
+    }
+
+    /// Sources that answer with `{ url, headers: { User-Agent: … } }`: the
+    /// headers are required by the file host (网盘 links 403 without them).
+    /// A plain string result (the common case) carries none.
+    private static func headers(from value: JSValue) -> [String: String] {
+        guard value.isObject else { return [:] }
+        guard let raw = value.objectForKeyedSubscript("headers"), raw.isObject,
+              let object = raw.toObject() as? [String: Any] else { return [:] }
+        var parsed: [String: String] = [:]
+        for (name, item) in object where item is String {
+            parsed[name] = (item as? String) ?? ""
+        }
+        return parsed
     }
 
     /// 网盘-style resolvers often return links with raw spaces or unencoded

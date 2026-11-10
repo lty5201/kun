@@ -118,6 +118,9 @@ final class CachingAudioResourceLoader: NSObject {
     private let source: AudioCacheSource
     private let maximumCacheSizeMB: Int
     private let cache: AudioCache
+    /// Attached to every network request (User-Agent / Referer / Cookie …).
+    /// 网盘 links answer 403 without the headers the source returned them with.
+    private let headers: [String: String]
     private let delegateQueue: OperationQueue
     private let resourceLoaderQueue: DispatchQueue
     private var session: URLSession!
@@ -219,6 +222,7 @@ final class CachingAudioResourceLoader: NSObject {
         servedQuality: String?,
         source: AudioCacheSource,
         maximumCacheSizeMB: Int,
+        headers: [String: String] = [:],
         cache: AudioCache = .shared,
         sessionConfiguration: URLSessionConfiguration = .default
     ) throws {
@@ -228,6 +232,7 @@ final class CachingAudioResourceLoader: NSObject {
         self.servedQuality = servedQuality
         self.source = source
         self.maximumCacheSizeMB = maximumCacheSizeMB
+        self.headers = headers
         self.cache = cache
 
         var components = URLComponents(url: remoteURL, resolvingAgainstBaseURL: false)
@@ -371,6 +376,9 @@ final class CachingAudioResourceLoader: NSObject {
             rangeValue = "bytes=\(pending.requestedOffset)-\(upperBound)"
         }
         request.setValue(rangeValue, forHTTPHeaderField: "Range")
+        for (name, value) in headers {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
         let task = session.dataTask(with: request)
         let networkTask = NetworkTask(initializing: pending, pendingRequestID: id)
         networkTask.task = task
@@ -392,6 +400,9 @@ final class CachingAudioResourceLoader: NSObject {
             "bytes=\(scheduledRange.range.lowerBound)-\(scheduledRange.range.upperBound - 1)",
             forHTTPHeaderField: "Range"
         )
+        for (name, value) in headers {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
         let task = session.dataTask(with: request)
         let networkTask = NetworkTask(range: scheduledRange.range, scheduledRangeID: scheduledRange.id)
         networkTask.task = task
@@ -406,6 +417,9 @@ final class CachingAudioResourceLoader: NSObject {
         var request = URLRequest(url: remoteURL)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("bytes=\(range.lowerBound)-\(range.upperBound - 1)", forHTTPHeaderField: "Range")
+        for (name, value) in headers {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
         let task = session.dataTask(with: request)
         let networkTask = NetworkTask(range: range, directPendingRequestID: id)
         networkTask.task = task

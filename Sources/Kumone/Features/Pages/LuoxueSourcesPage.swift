@@ -14,6 +14,7 @@ import UIKit
 /// sources with per-source enable / refresh / delete.
 struct LuoxueSourcesPage: View {
     @ObservedObject private var manager = LuoxueSourceManager.shared
+    @ObservedObject private var settings = SettingsManager.shared
 
     @State private var linkInput = ""
     @State private var importing = false
@@ -38,6 +39,7 @@ struct LuoxueSourcesPage: View {
     var body: some View {
         Form {
             onlineImportSection
+            headersSection
             installedSection
             activityLogSection
         }
@@ -92,6 +94,37 @@ struct LuoxueSourcesPage: View {
     }
 
     // MARK: - 在线导入
+
+    /// 播放请求头：网盘类音源返回的链接常要求特定 User-Agent / Referer /
+    /// Cookie 才肯出数据，这里一次配好，播放和下载都会带上。
+    private var headersSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "network.badge.shield.half.filled")
+                        .foregroundStyle(Theme.accent)
+                    Text("播放请求头（网盘源需要）")
+                        .font(.subheadline.weight(.semibold))
+                }
+                TextField(
+                    String(localized: "每行一个，格式 Key: Value"),
+                    text: $settings.customSourceHeaders,
+                    axis: .vertical
+                )
+                #if os(iOS)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                #endif
+                .font(.caption.monospaced())
+                .lineLimit(3...8)
+
+                Text("播放和下载自定义源歌曲时附带这些请求头。例如：\nUser-Agent: Mozilla/5.0 (iPhone; …)\nReferer: https://…/\n未填写时默认使用 lx-music-mobile 的 UA。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, 2)
+        }
+    }
 
     private var activityLogSection: some View {
         Section(String(localized: "导入记录")) {
@@ -181,7 +214,7 @@ struct LuoxueSourcesPage: View {
                     .foregroundStyle(.tertiary)
 
                 // Build marker: lets the user confirm which build is running.
-                Text("当前构建：2026-11-10.10（源引擎兼容层：UA伪装+混合响应体+CommonJS插件+音质降级）")
+                Text("当前构建：2026-11-10.11（网盘链接自定义请求头：脚本返回headers+设置页可配；VIP歌曲下载走自定义源）")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
 
