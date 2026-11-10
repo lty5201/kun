@@ -25,11 +25,21 @@ struct LuoxueSourcesPage: View {
     /// by the settings sheet this page lives in, so a toast here is invisible.
     @State private var importAlertMessage: String?
     @State private var showImportAlert = false
+    /// On-page record of the last import attempts, so problems can be
+    /// diagnosed from a screenshot when nothing else happens.
+    @State private var activityLog: [String] = []
+
+    private func logActivity(_ line: String) {
+        let time = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+        activityLog.append("\(time) \(line)")
+        if activityLog.count > 10 { activityLog.removeFirst(activityLog.count - 10) }
+    }
 
     var body: some View {
         Form {
             onlineImportSection
             installedSection
+            activityLogSection
         }
         .formStyle(.grouped)
         .navigationTitle(String(localized: "自定义源管理"))
@@ -43,16 +53,10 @@ struct LuoxueSourcesPage: View {
         }
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
-        // SwiftUI's fileImporter silently drops its completion when the picker
-        // is dismissed from a page nested in a sheet's NavigationStack — the
-        // picker opens, a file is chosen, and nothing happens. The UIKit
-        // document picker's delegate always fires, so 本地导入 uses it instead.
-        .sheet(isPresented: $showingFileImporter) {
-            IOSDocumentPicker(onPick: { urls in
-                guard !urls.isEmpty else { return }
-                importLocalBatch(urls)
-            })
-        }
+        // 本地导入 presents the picker straight from UIKit (see
+        // `presentNativePicker`): every SwiftUI layer — fileImporter and even
+        // a sheet-wrapped UIKit picker — proved unreliable on a page nested
+        // inside the settings sheet on some devices.
         #else
         .fileImporter(
             isPresented: $showingFileImporter,
@@ -88,6 +92,22 @@ struct LuoxueSourcesPage: View {
     }
 
     // MARK: - 在线导入
+
+    private var activityLogSection: some View {
+        Section(String(localized: "导入记录")) {
+            if activityLog.isEmpty {
+                Text("暂无记录")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            } else {
+                ForEach(activityLog, id: \.self) { line in
+                    Text(line)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
 
     private var onlineImportSection: some View {
         Section {
@@ -138,7 +158,13 @@ struct LuoxueSourcesPage: View {
                     sourceActionButton(
                         title: String(localized: "本地导入"),
                         icon: "folder",
-                        action: { showingFileImporter = true })
+                        action: {
+                            #if os(iOS)
+                            presentNativePicker()
+                            #else
+                            showingFileImporter = true
+                            #endif
+                        })
                     sourceActionButton(
                         title: String(localized: "粘贴导入"),
                         icon: "doc.on.clipboard",
@@ -152,6 +178,11 @@ struct LuoxueSourcesPage: View {
 
                 Text("本地导入支持一次选择多个脚本，或直接选择整个文件夹批量导入")
                     .font(.caption)
+                    .foregroundStyle(.tertiary)
+
+                // Build marker: lets the user confirm which build is running.
+                Text("当前构建：2026-11-10.6（导入修复版）")
+                    .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
             .padding(.vertical, 2)
@@ -236,12 +267,44 @@ struct LuoxueSourcesPage: View {
         }
     }
 
+    #if os(iOS)
+    /// Presents the system document picker directly from UIKit. On some
+    /// devices every SwiftUI-mediated path (fileImporter, and a sheet-wrapped
+    /// UIKit picker) opened the picker but never delivered the picked file
+    /// when this page is nested inside the settings sheet. Presenting from
+    /// the top-most view controller with a retained UIKit delegate removes
+    /// every SwiftUI layer from the path.
+    private func presentNativePicker() {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first,
+            let window = scene.windows.first(where: \.isKeyWindow) ?? scene.windows.first,
+            let root = window.rootViewController else { return }
+
+        var top = root
+        while let presented = top.presentedViewController { top = presented }
+
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: [.item, .folder], asCopy: false)
+        picker.allowsMultipleSelection = true
+        let presenter = IOSPickerPresenter.shared
+        presenter.onPick = { urls in
+            guard !urls.isEmpty else { return }
+            importLocalBatch(urls)
+        }
+        picker.delegate = presenter
+        top.present(picker, animated: true)
+        logActivity("已打开文件选择器")
+    }
+    #endif
+
     private func importLocalBatch(_ urls: [URL]) {
         errorMessage = nil
         importing = true
+        logActivity("已选择 \(urls.count) 个文件，开始读取…")
         Task {
             defer { importing = false }
             let result = await manager.installLocalBatch(scriptsAt: urls)
+            logActivity("完成：成功 \(result.installed) 个，失败 \(result.failures.count) 个")
             if result.failures.isEmpty {
                 if result.installed > 0 {
                     importAlertMessage = String(localized: "已导入 \(result.installed) 个音源，请稍候其在列表中完成加载")
@@ -252,6 +315,9 @@ struct LuoxueSourcesPage: View {
                     showImportAlert = true
                 }
             } else {
+                for failure in result.failures {
+                    logActivity("失败：\(failure.name) — \(failure.error)")
+                }
                 let names = result.failures.map(\.name).joined(separator: "、")
                 importAlertMessage = String(localized: "已导入 \(result.installed) 个，失败 \(result.failures.count) 个：\(names)")
                 showImportAlert = true
@@ -383,39 +449,24 @@ private struct LuoxueSourceRow: View {
 }
 
 #if os(iOS)
-/// The system document picker on iOS: SwiftUI's `fileImporter` can silently
-/// swallow the picked file on a page presented inside a sheet's navigation
-/// stack, while `UIDocumentPickerViewController`'s delegate callback is
-/// reliable. Presented as a sheet, so it never depends on the enclosing
-/// presentation context.
-private struct IOSDocumentPicker: UIViewControllerRepresentable {
-    let onPick: ([URL]) -> Void
+/// Retained singleton holding the document-picker delegate: the picker is
+/// presented straight from UIKit (see `presentNativePicker` below), so nothing
+/// depends on SwiftUI's presentation bookkeeping staying alive.
+private final class IOSPickerPresenter: NSObject, UIDocumentPickerDelegate {
+    static let shared = IOSPickerPresenter()
+    var onPick: (([URL]) -> Void)?
 
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let picker = UIDocumentPickerViewController(
-            forOpeningContentTypes: [.item, .folder], asCopy: false)
-        picker.allowsMultipleSelection = true
-        picker.delegate = context.coordinator
-        return picker
+    func documentPicker(
+        _ controller: UIDocumentPickerViewController,
+        didPickDocumentsAt urls: [URL]
+    ) {
+        let callback = onPick
+        onPick = nil
+        callback?(urls)
     }
 
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
-
-    final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let onPick: ([URL]) -> Void
-
-        init(onPick: @escaping ([URL]) -> Void) {
-            self.onPick = onPick
-        }
-
-        func documentPicker(
-            _ controller: UIDocumentPickerViewController,
-            didPickDocumentsAt urls: [URL]
-        ) {
-            onPick(urls)
-        }
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        onPick = nil
     }
 }
 #endif
