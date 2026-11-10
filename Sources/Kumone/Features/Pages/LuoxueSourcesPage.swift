@@ -21,6 +21,10 @@ struct LuoxueSourcesPage: View {
     @State private var checking = false
     @State private var checkResults: [UUID: LuoxueSourceManager.CheckResult] = [:]
     @State private var errorMessage: String?
+    /// Import outcome shown as an alert: the root toast overlay is covered
+    /// by the settings sheet this page lives in, so a toast here is invisible.
+    @State private var importAlertMessage: String?
+    @State private var showImportAlert = false
 
     var body: some View {
         Form {
@@ -29,6 +33,14 @@ struct LuoxueSourcesPage: View {
         }
         .formStyle(.grouped)
         .navigationTitle(String(localized: "自定义源管理"))
+        .alert(
+            String(localized: "导入结果"),
+            isPresented: $showImportAlert
+        ) {
+            Button(String(localized: "好"), role: .cancel) {}
+        } message: {
+            Text(importAlertMessage ?? "")
+        }
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         // SwiftUI's fileImporter silently drops its completion when the picker
@@ -232,14 +244,17 @@ struct LuoxueSourcesPage: View {
             let result = await manager.installLocalBatch(scriptsAt: urls)
             if result.failures.isEmpty {
                 if result.installed > 0 {
-                    ToastCenter.shared.show(String(localized: "已导入 \(result.installed) 个音源"))
+                    importAlertMessage = String(localized: "已导入 \(result.installed) 个音源，请稍候其在列表中完成加载")
+                    showImportAlert = true
                 } else {
                     // Never silent: an empty result means nothing was even read.
-                    errorMessage = String(localized: "没有读取到任何脚本文件，请确认选择的是 .js 文件")
+                    importAlertMessage = String(localized: "没有读取到任何脚本文件，请确认选择的是 .js 文件")
+                    showImportAlert = true
                 }
             } else {
                 let names = result.failures.map(\.name).joined(separator: "、")
-                errorMessage = String(localized: "已导入 \(result.installed) 个，失败 \(result.failures.count) 个：\(names)")
+                importAlertMessage = String(localized: "已导入 \(result.installed) 个，失败 \(result.failures.count) 个：\(names)")
+                showImportAlert = true
             }
         }
     }

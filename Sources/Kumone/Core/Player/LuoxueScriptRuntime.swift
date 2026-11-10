@@ -277,6 +277,15 @@ final class LuoxueScriptRuntime {
 
     // MARK: Loading
 
+    /// One `@field value` entry from a script's leading comment header.
+    private static func scriptHeaderField(_ field: String, in script: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: "@\(field)\\s+([^\\r\\n*]+)"),
+              let match = regex.firstMatch(in: script, range: NSRange(script.startIndex..., in: script)),
+              let range = Range(match.range(at: 1), in: script) else { return nil }
+        let value = script[range].trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
     /// Evaluates the script and waits (briefly) for its `inited` event.
     func load(script: String, env: String, version: String) async throws -> [String: Capability] {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[String: Capability], Error>) in
@@ -316,6 +325,12 @@ final class LuoxueScriptRuntime {
                 context.setObject(bridge, forKeyedSubscript: "__lxBridge" as NSString)
                 context.setObject(env, forKeyedSubscript: "__lxEnv" as NSString)
                 context.setObject(version, forKeyedSubscript: "__lxVersion" as NSString)
+                // `lx.currentScriptInfo` — some scripts read their own header
+                // metadata (e.g. for integrity checks) at init time.
+                context.setObject(Self.scriptHeaderField("name", in: script) ?? "", forKeyedSubscript: "__lxScriptName" as NSString)
+                context.setObject(Self.scriptHeaderField("description", in: script) ?? "", forKeyedSubscript: "__lxScriptDescription" as NSString)
+                context.setObject(Self.scriptHeaderField("version", in: script) ?? "", forKeyedSubscript: "__lxScriptVersion" as NSString)
+                context.setObject(Self.scriptHeaderField("author", in: script) ?? "", forKeyedSubscript: "__lxScriptAuthor" as NSString)
 
                 context.evaluateScript(Self.shimSource)
 
@@ -627,6 +642,12 @@ final class LuoxueScriptRuntime {
 
       return {
         EVENT_NAMES: EVENT_NAMES,
+        currentScriptInfo: {
+          name: globalThis.__lxScriptName || '',
+          description: globalThis.__lxScriptDescription || '',
+          version: globalThis.__lxScriptVersion || '',
+          author: globalThis.__lxScriptAuthor || '',
+        },
         on: function(name, handler) {
           if (name === EVENT_NAMES.request && typeof handler === 'function') requestHandler = handler
         },
