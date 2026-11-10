@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 #if os(macOS)
 import Combine
 #endif
@@ -35,6 +36,10 @@ struct SettingsSheet: View {
                             dismiss()
                             openDestination(.downloaded)
                         }
+                    case .lyrics:
+                        LyricsSettingsPage()
+                    case .luoxueSources:
+                        LuoxueSourcesPage()
                     case .soundEffects:
                         SoundEffectsPage()
                     }
@@ -47,14 +52,26 @@ struct SettingsSheet: View {
 struct SettingsView: View {
     @EnvironmentObject private var settings: SettingsManager
     @EnvironmentObject private var account: AccountStore
+    @ObservedObject private var luoxue = LuoxueSourceManager.shared
     @Environment(\.openDestination) private var openDestination
     #if os(macOS)
     @AppStorage(SettingsManager.Keys.menuBarPlayer) private var showMenuBarPlayer = false
     @State private var navigationPath: [SettingsPage] = []
     #endif
 
+    /// One-line summary of the installed Luoxue sources, shown on the
+    /// 自定义源管理 row.
+    private var luoxueSummaryText: String {
+        let entries = luoxue.entries
+        if entries.isEmpty { return String(localized: "未导入") }
+        let enabled = entries.filter(\.enabled).count
+        return String(localized: "\(entries.count) 个源，\(enabled) 个启用")
+    }
+
     fileprivate enum SettingsPage: Hashable {
         case storage
+        case lyrics
+        case luoxueSources
         #if os(iOS)
         case soundEffects
         #endif
@@ -91,11 +108,11 @@ struct SettingsView: View {
         Form {
             Section("播放") {
                 Picker("音质", selection: $settings.audioQuality) {
-                    ForEach(AudioQuality.allCases) { quality in
+                    ForEach(AudioQuality.allCases.filter(\.showsInSheet)) { quality in
                         Text(quality.displayName).tag(quality)
                     }
                 }
-                Text("无损与 Hi-Res 需要黑胶 VIP，未开通时自动回落到可用音质")
+                Text("无损、Hi-Res 与高清臻音需黑胶 VIP，全景声与母带需 SVIP，未开通时自动回落到可用音质；播放页与底部控制栏的音质标签可点开切换")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 #if os(iOS)
@@ -111,7 +128,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settingsSoundEffectsButton")
                 #endif
                 Toggle("灰色歌曲解锁", isOn: $settings.enableUnblock)
-                Text("无版权或下架歌曲将从已启用音源中匹配播放")
+                Text("无版权或下架歌曲将通过落雪自定义源匹配播放")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -120,22 +137,37 @@ struct SettingsView: View {
             AutoMixSettingsSection()
             #endif
 
-            if settings.enableUnblock {
-                Section {
-                    ForEach(AudioSourceID.allCases, id: \.self) { source in
-                        Toggle(source.displayName, isOn: Binding(
-                            get: { settings.enabledAudioSourceIDs.contains(source) },
-                            set: { isEnabled in
-                                if isEnabled {
-                                    settings.enabledAudioSourceIDs.insert(source)
-                                } else {
-                                    settings.enabledAudioSourceIDs.remove(source)
-                                }
-                            }
-                        ))
+            // The custom-source section is always visible — the Luoxue script
+            // is the only music source left in the app, so hiding its entry
+            // behind another toggle made the app look like it had no source
+            // management at all.
+            Section("自定义源") {
+                NavigationLink(value: SettingsPage.luoxueSources) {
+                    HStack {
+                        Label("自定义源管理", systemImage: "music.note.list")
+                        Spacer()
+                        Text(luoxueSummaryText)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
-                } header: {
-                    Text("音源")
+                }
+                .accessibilityIdentifier("settingsLuoxueSourcesButton")
+                Text("导入兼容 lx-music 格式的第三方音源脚本，支持本地批量导入与在线直链导入。脚本仅在本机运行，用于解析无版权或试听歌曲的播放地址。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Flutify lyrics settings entry — always visible, never hidden.
+            Section("歌词") {
+                NavigationLink(value: SettingsPage.lyrics) {
+                    Label("歌词设置", systemImage: "text.quote")
+                }
+                Toggle("显示歌词翻译", isOn: $settings.showLyricsTranslation)
+                Picker("日文歌词读音", selection: $settings.lyricsAnnotation) {
+                    ForEach(LyricsAnnotation.allCases) { annotation in
+                        Text(annotation.displayName).tag(annotation)
+                    }
                 }
             }
 
@@ -174,16 +206,6 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                 #endif
                 Toggle("点击封面打开专辑", isOn: $settings.openAlbumOnArtworkClick)
-                Toggle("显示歌词翻译", isOn: $settings.showLyricsTranslation)
-                Toggle("逐字歌词（卡拉OK）", isOn: $settings.verbatimLyrics)
-                Picker("日文歌词读音", selection: $settings.lyricsAnnotation) {
-                    ForEach(LyricsAnnotation.allCases) { annotation in
-                        Text(annotation.displayName).tag(annotation)
-                    }
-                }
-                Text("罗马音在歌词上方另起一行，汉字读音把假名标在汉字正上方；缺少官方罗马音时自动生成读音")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Toggle("主界面环境色", isOn: $settings.showMainWindowAmbientBackground)
                 if settings.showMainWindowAmbientBackground {
                     VStack(alignment: .leading, spacing: 6) {
@@ -299,6 +321,10 @@ struct SettingsView: View {
                     StorageSpaceView {
                         openDestination(.downloaded)
                     }
+                case .lyrics:
+                    LyricsSettingsPage()
+                case .luoxueSources:
+                    LuoxueSourcesPage()
                 case .shortcuts:
                     ShortcutSettingsView()
                 }
@@ -309,6 +335,8 @@ struct SettingsView: View {
                 ToolbarItem(placement: .principal) {
                     switch page {
                     case .storage: Text("存储空间").font(.headline)
+                    case .lyrics: Text("歌词").font(.headline)
+                    case .luoxueSources: Text("自定义源管理").font(.headline)
                     case .shortcuts: Text("快捷键").font(.headline)
                     }
                 }

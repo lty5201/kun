@@ -118,15 +118,18 @@ struct LyricsPanel: View {
         Button {
             player.seek(to: line.time)
         } label: {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(
+                alignment: settings.lyricsAlign == .center ? .center : .leading,
+                spacing: 3
+            ) {
                 if settings.lyricsAnnotation == .romaji, let romaji = line.romaji {
                     Text(romaji)
-                        .font(.system(size: isActive ? 12 : 11))
+                        .font(.system(size: (isActive ? 12 : 11) * settings.lyricsScale))
                         .foregroundStyle(isActive ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
                 }
                 LyricText(
                     line: line,
-                    size: isActive ? 16 : 14,
+                    size: (isActive ? 16 : 14) * settings.lyricsScale,
                     weight: isActive ? .bold : .medium,
                     // Core Text needs a resolved colour, so the hierarchical
                     // styles the other rows use are spelled out here.
@@ -134,12 +137,15 @@ struct LyricsPanel: View {
                 )
                 if settings.showLyricsTranslation, let translation = line.translation {
                     Text(translation)
-                        .font(.system(size: isActive ? 13 : 12))
+                        .font(.system(size: (isActive ? 13 : 12) * settings.lyricsScale))
                         .foregroundStyle(isActive ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
                 }
             }
-            .multilineTextAlignment(.leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .multilineTextAlignment(settings.lyricsAlign == .center ? .center : .leading)
+            .frame(
+                maxWidth: .infinity,
+                alignment: settings.lyricsAlign == .center ? .center : .leading
+            )
             .contentShape(Rectangle())
             .opacity(isActive ? 1 : 0.75)
             .blur(radius: isActive || isUserScrolling ? 0 : 0.3)

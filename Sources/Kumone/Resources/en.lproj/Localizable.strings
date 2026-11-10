@@ -34,7 +34,7 @@
 "检查更新…" = "Check for Updates…";
 "打开播放页" = "Open Now Playing";
 "私人漫游中" = "Personal FM";
-"音源" = "Audio Sources";
+"自定义源" = "Custom Source";
 "来自 %@" = "From %@";
 "音量" = "Volume";
 "未在播放" = "Not Playing";
@@ -212,7 +212,7 @@
 "高解析" = "Hi-Res";
 "无损与 Hi-Res 需要黑胶 VIP，未开通时自动回落到可用音质" = "Lossless and Hi-Res require VIP; falls back automatically otherwise";
 "灰色歌曲解锁" = "Unblock Gray Tracks";
-"无版权或下架歌曲将从已启用音源中匹配播放" = "Unavailable tracks are matched from enabled sources";
+"无版权或下架歌曲将通过落雪自定义源匹配播放" = "Unavailable tracks are matched through the Luoxue custom source";
 "外观" = "Appearance";
 "主题" = "Theme";
 "跟随系统" = "System";
@@ -279,11 +279,9 @@
 "已添加到下一首播放" = "Added to play next";
 "获取私人漫游数据失败" = "Failed to load Personal FM";
 "已经是最后一首了" = "Already the last song";
-"已使用第三方音源：%@" = "Playing from third-party source: %@";
+"已使用自定义源：%@" = "Playing from custom source: %@";
 "《%@》无法播放%@" = "“%@” can’t be played%@";
 "VIP 歌曲，当前为试听片段" = "VIP song — playing a trial clip";
-"酷我音乐" = "Kuwo Music";
-"酷狗音乐" = "Kugou Music";
 
 /* Track playability */
 "VIP 专属" = "VIP Only";
@@ -446,7 +444,7 @@
 "音频校验失败，请重试" = "Audio verification failed. Retry the download.";
 "无法保存音频，请重试" = "Unable to save the audio. Please retry.";
 "歌曲正在使用中，请稍后重试" = "The song is in use. Please try again later.";
-"无法解析音源地址，请检查网络后重试" = "The audio server could not be found. Check your connection and retry.";
+"无法解析服务地址，请检查网络后重试" = "The server could not be found. Check your connection and retry.";
 "下载失败，请检查网络或账号权限后重试" = "Download failed. Check your connection or account access and retry.";
 "本地文件缺失，请重新下载" = "The local file is missing. Download it again.";
 "取消未完成任务" = "Cancel Unfinished Downloads";
@@ -569,8 +567,8 @@
 "清澈人声" = "Clear Vocals";
 "自定义" = "Custom";
 "开始播放后可实时试听音效" = "Start playing to preview sound effects in real time.";
-"正在准备当前音源的音效处理…" = "Preparing sound effects for this source…";
-"当前音源暂不支持音效，将保持原声播放；所选方案会在下一首可处理歌曲自动生效。" = "Sound effects are unavailable for this source, so it will play unchanged. Your selection will apply automatically to the next supported track.";
+"正在准备当前来源的音效处理…" = "Preparing sound effects for this source…";
+"当前来源暂不支持音效，将保持原声播放；所选方案会在下一首可处理歌曲自动生效。" = "Sound effects are unavailable for this source, so it will play unchanged. Your selection will apply automatically to the next supported track.";
 "自定义均衡器" = "Custom Equalizer";
 "拖动频段即可实时试听，设置会自动保存" = "Adjust a band to hear it immediately. Changes are saved automatically.";
 "重置" = "Reset";
@@ -654,3 +652,8 @@
 "关闭随机播放" = "Turn Off Shuffle";
 "下载失败：%@" = "Download failed: %@";
 "下载失败（%@ %@），请检查网络或账号权限后重试" = "Download failed (%@ %@). Check your network or account access and try again";
+"落雪自定义源" = "Luoxue Custom Source";
+"未选择脚本" = "No script selected";
+"载入中…" = "Loading…";
+"已载入（%@）" = "Loaded (%@)";
+"载入失败：%@" = "Failed to load: %@";

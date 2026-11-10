@@ -6,6 +6,12 @@ enum AudioQuality: String, CaseIterable, Identifiable {
     case exhigh
     case lossless
     case hires
+    // NetEase's newer tiers; the API degrades to whatever the account can
+    // actually stream, same as the official app's sheet.
+    case jyeffect
+    case vivid
+    case sky
+    case jymaster
 
     var id: String { rawValue }
 
@@ -13,21 +19,94 @@ enum AudioQuality: String, CaseIterable, Identifiable {
         switch self {
         case .standard: return String(localized: "标准")
         case .higher: return String(localized: "较高")
-        case .exhigh: return String(localized: "极高")
-        case .lossless: return String(localized: "无损")
+        case .exhigh: return String(localized: "极高 HQ")
+        case .lossless: return String(localized: "无损 SQ")
+        case .hires: return String(localized: "高解析度无损")
+        case .jyeffect: return String(localized: "高清臻音")
+        case .vivid: return String(localized: "臻音全景声")
+        case .sky: return String(localized: "沉浸环绕声")
+        case .jymaster: return String(localized: "超清母带")
+        }
+    }
+
+    /// The English tier name the official sheet prints beside the Chinese one.
+    var englishName: String? {
+        switch self {
+        case .sky: return "Surround Audio"
+        case .jymaster: return "Master"
+        case .vivid: return "Audio Vivid"
+        case .jyeffect: return "Spatial Audio"
         case .hires: return "Hi-Res"
+        default: return nil
+        }
+    }
+
+    /// The small tag printed next to a top card's title (沉浸环绕声 carries
+    /// 听感升级 in the official sheet).
+    var cardTag: String? {
+        switch self {
+        case .sky: return String(localized: "听感升级")
+        default: return nil
         }
     }
 
     var badge: String {
         switch self {
-        case .standard: return String(localized: "标准")
+        case .standard: return String(localized: "标")
         case .higher: return String(localized: "较高")
-        case .exhigh: return String(localized: "极高")
-        case .lossless: return String(localized: "无损")
-        case .hires: return String(localized: "高解析")
+        case .exhigh: return "HQ"
+        case .lossless: return "SQ"
+        case .hires: return "Hi-Res"
+        case .jyeffect: return String(localized: "臻音")
+        case .vivid: return String(localized: "全景声")
+        case .sky: return String(localized: "环绕声")
+        case .jymaster: return String(localized: "母带")
         }
     }
+
+    /// The sheet's secondary line, matching the official app's wording.
+    var detailText: String {
+        switch self {
+        case .standard: return String(localized: "128kbps")
+        case .higher: return String(localized: "192kbps")
+        case .exhigh: return String(localized: "近 CD 音质的细节体验，最高320kbps")
+        case .lossless: return String(localized: "高保真无损音质，最高48kHz/16bit")
+        case .hires: return String(localized: "更饱满清晰的高解析度音质，最高192kHz/24bit")
+        case .jyeffect: return String(localized: "高频细节还原与清晰沉浸感，96kHz/24bit")
+        case .vivid: return String(localized: "沉浸三维空间音频，最高7.1.4声道")
+        case .sky: return String(localized: "环绕音感 最高5.1声道")
+        case .jymaster: return String(localized: "极致细节 192kHz/24bit")
+        }
+    }
+
+    /// The badge shown beside the tier name: SVIP / VIP tiers follow the
+    /// official sheet (臻音全景声、沉浸环绕声、超清母带 are SVIP; 高清臻音、
+    /// Hi-Res、无损 are VIP; the free tiers carry none).
+    var tierBadge: String? {
+        switch self {
+        case .jymaster, .sky, .vivid: return "SVIP"
+        case .jyeffect, .hires, .lossless: return "VIP"
+        case .standard, .higher, .exhigh: return nil
+        }
+    }
+
+    /// Order in the quality sheet, best first — matches the official app.
+    var sheetOrder: Int {
+        switch self {
+        case .sky: return 0
+        case .jymaster: return 1
+        case .vivid: return 2
+        case .jyeffect: return 3
+        case .hires: return 4
+        case .lossless: return 5
+        case .exhigh: return 6
+        case .higher: return 7
+        case .standard: return 8
+        }
+    }
+
+    /// 较高 exists in the API but the official sheet leaves it out.
+    var showsInSheet: Bool { self != .higher }
 }
 
 enum AppAppearance: String, CaseIterable, Identifiable {
@@ -125,11 +204,11 @@ final class SettingsManager: ObservableObject {
         static let showTranslation = "settings.showLyricsTranslation"
         static let showRomaji = "settings.showLyricsRomaji"  // migrated to `annotation`
         static let annotation = "settings.lyricsAnnotation"
-        static let verbatimLyrics = "settings.verbatimLyrics"
         static let volume = "settings.volume"
         static let fmMode = "settings.fmMode"
         static let unblock = "settings.enableUnblock"
-        static let unblockSources = "settings.enabledUnblockSources"
+        static let luoxueScriptPath = "settings.luoxueScriptPath"
+        static let customSourceHeaders = "settings.customSourceHeaders"
         static let autoCheckUpdates = "settings.autoCheckUpdates"
         static let desktopLyrics = "settings.showDesktopLyrics"
         #if os(macOS)
@@ -152,7 +231,84 @@ final class SettingsManager: ObservableObject {
         static let soundEffectPreset = "settings.soundEffectPreset"
         static let customEqualizerGains = "settings.customEqualizerGains"
         #endif
+        // Flutify lyrics settings
+        static let lyricsAutoTranslate = "settings.lyricsAutoTranslate"
+        static let lyricsExcludeInterface = "settings.lyricsExcludeInterface"
+        static let lyricsExcludedLanguages = "settings.lyricsExcludedLanguages"
+        static let lyricsScale = "settings.lyricsScale"
+        static let lyricsAlign = "settings.lyricsAlign"
+        static let lyricsFocusPosition = "settings.lyricsFocusPosition"
+        static let lyricsFallback = "settings.lyricsFallback"
+        static let lyricsSourceOrder = "settings.lyricsSourceOrder"
+        static let lyricsBilingual = "settings.lyricsBilingual"
     }
+
+    /// Flutify's `LyricsSource`: the four sources the lyrics chain uses. Not
+    /// every source is wired into this app's player, but the setting (and its
+    /// persisted order) is kept 1:1 with Flutify so the source-priority list
+    /// in settings reads the same and can be reordered.
+    enum LyricsSourceKind: String, CaseIterable, Identifiable, Codable {
+        case spotify
+        case qqMusic
+        case netease
+        case lrclib
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .spotify: return "Spotify"
+            case .qqMusic: return "QQ 音乐"
+            case .netease: return "网易云音乐"
+            case .lrclib: return "LRCLIB"
+            }
+        }
+
+        var roleText: String {
+            switch self {
+            case .spotify: return "原文，自带译文"
+            case .lrclib: return "原文与译文"
+            default: return "原文与中文译词"
+            }
+        }
+
+        static let defaultOrder: [LyricsSourceKind] = [.spotify, .qqMusic, .netease, .lrclib]
+
+        /// Same normalisation as Flutify: drop unknown / duplicate entries,
+        /// then append anything missing in the default order.
+        static func parseOrder(_ raw: [String]) -> [LyricsSourceKind] {
+            var seen: [LyricsSourceKind] = []
+            for name in raw {
+                if let source = LyricsSourceKind(rawValue: name), !seen.contains(source) {
+                    seen.append(source)
+                }
+            }
+            for source in defaultOrder where !seen.contains(source) {
+                seen.append(source)
+            }
+            return seen
+        }
+    }
+
+    /// Flutify's `LyricsAlign`.
+    enum LyricsAlign: String, CaseIterable, Identifiable {
+        case left
+        case center
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .left: return "左对齐"
+            case .center: return "居中"
+            }
+        }
+    }
+
+    /// Flutify's lyrics scaling bounds (`minLyricsScale` / `maxLyricsScale`).
+    static let lyricsScaleRange: ClosedRange<Double> = 0.7...1.6
+    /// Flutify's focus-position bounds.
+    static let lyricsFocusPositionRange: ClosedRange<Double> = 0.05...0.55
 
     @Published var audioQuality: AudioQuality {
         didSet { UserDefaults.standard.set(audioQuality.rawValue, forKey: Keys.quality) }
@@ -219,6 +375,47 @@ final class SettingsManager: ObservableObject {
         didSet { UserDefaults.standard.set(showLyricsTranslation, forKey: Keys.showTranslation) }
     }
 
+    // MARK: - Flutify lyrics settings (1:1 with the LyricsSection)
+    //
+    // Every item Flutify's lyrics section exposes, in the same order, so a
+    // user coming from Flutify finds the same switches and sliders.
+
+    @Published var lyricsAutoTranslate: Bool {
+        didSet { UserDefaults.standard.set(lyricsAutoTranslate, forKey: Keys.lyricsAutoTranslate) }
+    }
+
+    @Published var lyricsExcludeInterfaceLanguage: Bool {
+        didSet { UserDefaults.standard.set(lyricsExcludeInterfaceLanguage, forKey: Keys.lyricsExcludeInterface) }
+    }
+
+    @Published var lyricsExcludedLanguages: [String] {
+        didSet { UserDefaults.standard.set(lyricsExcludedLanguages, forKey: Keys.lyricsExcludedLanguages) }
+    }
+
+    @Published var lyricsScale: Double {
+        didSet { UserDefaults.standard.set(lyricsScale, forKey: Keys.lyricsScale) }
+    }
+
+    @Published var lyricsAlign: LyricsAlign {
+        didSet { UserDefaults.standard.set(lyricsAlign.rawValue, forKey: Keys.lyricsAlign) }
+    }
+
+    @Published var lyricsFocusPosition: Double {
+        didSet { UserDefaults.standard.set(lyricsFocusPosition, forKey: Keys.lyricsFocusPosition) }
+    }
+
+    @Published var lyricsFallback: Bool {
+        didSet { UserDefaults.standard.set(lyricsFallback, forKey: Keys.lyricsFallback) }
+    }
+
+    @Published var lyricsSourceOrder: [LyricsSourceKind] {
+        didSet { UserDefaults.standard.set(lyricsSourceOrder.map(\.rawValue), forKey: Keys.lyricsSourceOrder) }
+    }
+
+    @Published var lyricsBilingual: Bool {
+        didSet { UserDefaults.standard.set(lyricsBilingual, forKey: Keys.lyricsBilingual) }
+    }
+
     /// Check for updates on launch. When off, no update sheet appears
     /// automatically; the user can still check manually (#42).
     @Published var autoCheckUpdates: Bool {
@@ -237,29 +434,38 @@ final class SettingsManager: ObservableObject {
     }
 
     /// Karaoke-style word-by-word highlighting: the service's own timing when the
-    /// song has verbatim (yrc) lyrics, else the line's time spread across its
-    /// characters.
-    @Published var verbatimLyrics: Bool {
-        didSet { UserDefaults.standard.set(verbatimLyrics, forKey: Keys.verbatimLyrics) }
-    }
-
-    /// Resolve gray tracks from third-party sources (unblock-style).
+    /// Resolve gray tracks from the Luoxue (LX Music) custom source script.
     @Published var enableUnblock: Bool {
         didSet { UserDefaults.standard.set(enableUnblock, forKey: Keys.unblock) }
     }
 
-    /// Built-in third-party sources eligible for gray-track resolution.
-    @Published var enabledAudioSourceIDs: Set<AudioSourceID> {
-        didSet {
-            UserDefaults.standard.set(
-                enabledAudioSourceIDs.map(\.rawValue).sorted(),
-                forKey: Keys.unblockSources
-            )
-        }
+    /// Whether gray tracks can be resolved: unblock enabled and at least one
+    /// Luoxue custom source loaded.
+    var canResolveUnblockedTracks: Bool {
+        LuoxueSourceManager.shared.ensureLoadedFromSettings()
+        return enableUnblock && LuoxueSourceManager.shared.isReady
     }
 
-    var canResolveUnblockedTracks: Bool {
-        enableUnblock && !enabledAudioSourceIDs.isEmpty
+    /// Extra request headers for custom-source playback and downloads, one
+    /// `Name: value` per line. 网盘 sources serve links that only answer to
+    /// a specific User-Agent / Referer / Cookie, so the user can add them
+    /// here once instead of per song.
+    @Published var customSourceHeaders: String {
+        didSet { UserDefaults.standard.set(customSourceHeaders, forKey: Keys.customSourceHeaders) }
+    }
+
+    var parsedCustomSourceHeaders: [String: String] {
+        var parsed: [String: String] = [:]
+        for line in customSourceHeaders.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            guard let separator = trimmed.firstIndex(of: ":") else { continue }
+            let name = trimmed[..<separator].trimmingCharacters(in: .whitespaces)
+            let value = trimmed[trimmed.index(after: separator)...].trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty, !value.isEmpty else { continue }
+            parsed[name] = value
+        }
+        return parsed
     }
 
     /// Floating desktop lyrics window (LyricsX-style).
@@ -446,13 +652,8 @@ final class SettingsManager: ObservableObject {
         // Carry over the old on/off romaji toggle for anyone who had it on.
         lyricsAnnotation = defaults.string(forKey: Keys.annotation).flatMap(LyricsAnnotation.init)
             ?? (defaults.bool(forKey: Keys.showRomaji) ? .romaji : .off)
-        verbatimLyrics = defaults.object(forKey: Keys.verbatimLyrics) as? Bool ?? true
         enableUnblock = defaults.object(forKey: Keys.unblock) as? Bool ?? true
-        if let rawSourceIDs = defaults.stringArray(forKey: Keys.unblockSources) {
-            enabledAudioSourceIDs = Set(rawSourceIDs.compactMap(AudioSourceID.init))
-        } else {
-            enabledAudioSourceIDs = Set(AudioSourceID.allCases)
-        }
+        customSourceHeaders = defaults.string(forKey: Keys.customSourceHeaders) ?? ""
         autoCheckUpdates = defaults.object(forKey: Keys.autoCheckUpdates) as? Bool ?? true
         showDesktopLyrics = defaults.object(forKey: Keys.desktopLyrics) as? Bool ?? false
         #if os(macOS)
@@ -483,6 +684,33 @@ final class SettingsManager: ObservableObject {
             from: defaults, key: Keys.soundEffectPreset)
         customEqualizerGains = SoundEffectPreferences.customConfiguration(
             from: defaults, key: Keys.customEqualizerGains).gains
+        #endif
+
+        // Flutify lyrics settings: defaults identical to Flutify's
+        // `AppPreferences` (lyricsScale 1.0, focus 0.16, fallback on, source
+        // order spotify → qq → netease → lrclib, no excluded languages, auto
+        // translate + exclude interface on, bilingual off).
+        lyricsAutoTranslate = defaults.object(forKey: Keys.lyricsAutoTranslate) as? Bool ?? true
+        lyricsExcludeInterfaceLanguage =
+            defaults.object(forKey: Keys.lyricsExcludeInterface) as? Bool ?? true
+        lyricsExcludedLanguages =
+            defaults.stringArray(forKey: Keys.lyricsExcludedLanguages) ?? []
+        let storedLyricsScale = defaults.object(forKey: Keys.lyricsScale) as? Double ?? 1
+        lyricsScale = min(max(storedLyricsScale, Self.lyricsScaleRange.lowerBound),
+                          Self.lyricsScaleRange.upperBound)
+        lyricsAlign = defaults.string(forKey: Keys.lyricsAlign).flatMap(LyricsAlign.init) ?? .left
+        let storedLyricsFocusPosition = defaults.object(forKey: Keys.lyricsFocusPosition) as? Double ?? 0.16
+        lyricsFocusPosition = min(max(storedLyricsFocusPosition, Self.lyricsFocusPositionRange.lowerBound),
+                                  Self.lyricsFocusPositionRange.upperBound)
+        lyricsFallback = defaults.object(forKey: Keys.lyricsFallback) as? Bool ?? true
+        lyricsSourceOrder = Self.LyricsSourceKind.parseOrder(
+            defaults.stringArray(forKey: Keys.lyricsSourceOrder) ?? [])
+        lyricsBilingual = defaults.object(forKey: Keys.lyricsBilingual) as? Bool ?? false
+
+        // Every stored property is assigned by now, so it is finally safe to
+        // publish the DSP parameters (calling it earlier trips Swift's
+        // definite-initialization check on the iOS target).
+        #if os(iOS)
         publishSoundEffectParameters()
         #endif
     }

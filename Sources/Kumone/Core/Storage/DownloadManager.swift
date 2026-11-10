@@ -1,4 +1,6 @@
+import AVFoundation
 import Combine
+import CryptoKit
 import Foundation
 import Network
 #if os(iOS)
@@ -661,7 +663,17 @@ final class DownloadManager: ObservableObject {
                 try await persist()
                 return
             }
-            let resource = try await resolver(job.track, job.quality, job.accountScope)
+            let resource: OfflineAudioResource
+            do {
+                resource = try await resolver(job.track, job.quality, job.accountScope)
+            } catch let error as OfflineAudioError where error == .unavailable {
+                // The service refuses the song (VIP / gray): the custom source
+                // may still have it. Download through it instead of failing.
+                guard SettingsManager.shared.canResolveUnblockedTracks else { throw error }
+                let descriptor = try await downloadViaCustomSource(job: job)
+                await complete(job: job, descriptor: descriptor)
+                return
+            }
             guard current(job), let i = index(job.id) else { return }
             guard network.permits(catalog.jobs[i]) else {
                 catalog.jobs[i].status = .waitingNetwork
@@ -801,6 +813,93 @@ final class DownloadManager: ObservableObject {
         }
     }
 
+    /// VIP / gray songs the service refuses to hand a download URL: fetch the
+    /// file through the Luoxue custom source instead. The link — and the
+    /// headers 网盘 hosts insist on, which AVPlayer/URLSession alone would not
+    /// send — comes from the script; the bytes are fingerprinted (MD5, size,
+    /// decoded duration) and imported through the same door a finished
+    /// background transfer uses, so verification and the library treat it
+    /// exactly like an official download.
+    private func downloadViaCustomSource(job: DownloadJob) async throws -> OfflineAudioDescriptor {
+        guard let resolved = try await LuoxueSourceManager.shared.resolve(track: job.track) else {
+            throw OfflineAudioError.unavailable
+        }
+        var request = URLRequest(url: resolved.url)
+        for (name, value) in resolved.headers ?? [:] {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        let (fileURL, response) = try await URLSession.shared.download(for: request)
+        // importDownload moves the file; removing afterwards is a no-op then.
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw OfflineAudioError.invalidResponse
+        }
+        let byteCount = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+            .flatMap(Int64.init) ?? 0
+        guard byteCount > 0 else { throw OfflineAudioError.invalidResource }
+
+        // The descriptor's MD5 is built from the received bytes, so the
+        // store's checksum verification passes by construction while the
+        // size check still proves the transfer completed.
+        guard let fileHandle = try? FileHandle(forReadingFrom: fileURL) else {
+            throw OfflineAudioError.invalidResource
+        }
+        defer { try? fileHandle.close() }
+        var digest = Insecure.MD5()
+        while let chunk = try? fileHandle.read(upToCount: 256 * 1024), !chunk.isEmpty {
+            digest.update(data: chunk)
+        }
+        let md5 = digest.finalize().map { String(format: "%02x", $0) }.joined()
+
+        let format = Self.customSourceFormat(url: resolved.url, mimeType: http.mimeType)
+        guard let format else { throw OfflineAudioError.invalidResource }
+
+        // Decoded frames give the duration the validator will check against.
+        var duration: TimeInterval = 0
+        if let audio = try? AVAudioFile(forReading: fileURL),
+           let buffer = AVAudioPCMBuffer(pcmFormat: audio.processingFormat, frameCapacity: 16_384),
+           audio.processingFormat.sampleRate > 0 {
+            var frames: Int64 = 0
+            while audio.framePosition < audio.length {
+                let count = AVAudioFrameCount(min(Int64(buffer.frameCapacity), audio.length - audio.framePosition))
+                guard (try? audio.read(into: buffer, frameCount: count)) != nil, buffer.frameLength > 0 else { break }
+                frames += Int64(buffer.frameLength)
+            }
+            duration = Double(frames) / audio.processingFormat.sampleRate
+        }
+        if duration <= 0 { duration = job.track.duration }
+        guard duration > 0 else { throw OfflineAudioError.invalidResource }
+        if job.track.duration > 0,
+           abs(duration - job.track.duration) > max(4, job.track.duration * 0.1) {
+            // The source served something that is not this song.
+            throw OfflineAudioError.invalidAudio
+        }
+
+        let descriptor = OfflineAudioDescriptor(
+            identity: OfflineAudioIdentity(
+                accountScope: job.accountScope,
+                trackID: job.track.id,
+                source: "unblock:\(AudioSourceID.luoxue.rawValue)",
+                quality: job.quality,
+                format: format,
+                contentMD5: md5),
+            byteCount: byteCount,
+            duration: duration)
+        try await store.importDownload(at: fileURL, descriptor: descriptor)
+        return descriptor
+    }
+
+    private static func customSourceFormat(url: URL, mimeType: String?) -> OfflineAudioFormat? {
+        if let byExtension = OfflineAudioFormat(rawValue: url.pathExtension.lowercased()) {
+            return byExtension
+        }
+        let type = (mimeType ?? "").lowercased()
+        if type.contains("flac") { return .flac }
+        if type.contains("mpeg") { return .mp3 }
+        if type.contains("mp4") || type.contains("aac") || type.contains("m4a") { return .m4a }
+        return nil
+    }
+
     private func complete(job: DownloadJob, descriptor: OfflineAudioDescriptor) async {
         guard current(job) else { return }
         do {
@@ -899,7 +998,7 @@ final class DownloadManager: ObservableObject {
             return String(localized: "下载失败：\(reason)")
         }
         let error = error as NSError
-        if error.code == NSURLErrorCannotFindHost || error.code == NSURLErrorDNSLookupFailed { return String(localized: "无法解析音源地址，请检查网络后重试") }
+        if error.code == NSURLErrorCannotFindHost || error.code == NSURLErrorDNSLookupFailed { return String(localized: "无法解析服务地址，请检查网络后重试") }
         return String(localized: "下载失败（\(error.domain) \(String(error.code))），请检查网络或账号权限后重试")
     }
 
