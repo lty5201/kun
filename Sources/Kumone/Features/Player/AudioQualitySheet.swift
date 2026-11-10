@@ -83,7 +83,7 @@ struct AudioQualitySheet: View {
         }
         .frame(maxWidth: .infinity)
         .presentationDetents([.medium, .large])
-        .presentationBackground(.thinMaterial)
+        .modifier(QualitySheetBackground())
     }
 
     // MARK: - Top cards (沉浸环绕声 / 超清母带)
@@ -230,6 +230,17 @@ struct AudioQualitySheet: View {
     private func select(_ quality: AudioQuality) {
         settings.audioQuality = quality
         dismiss()
+    }
+}
+
+/// The sheet's glass background needs iOS 16.4; the build targets 16.0.
+private struct QualitySheetBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.4, macOS 13.4, *) {
+            content.presentationBackground(.thinMaterial)
+        } else {
+            content
+        }
     }
 }
 
