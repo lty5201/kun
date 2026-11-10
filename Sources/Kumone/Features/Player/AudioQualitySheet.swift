@@ -124,7 +124,8 @@ struct AudioQualitySheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(isSelected ? Theme.accent.opacity(0.12) : .quaternary.opacity(0.4))
+                    .fill(isSelected ? AnyShapeStyle(Theme.accent.opacity(0.12))
+                                     : AnyShapeStyle(.quaternary.opacity(0.4)))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
