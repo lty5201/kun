@@ -9,6 +9,7 @@ enum AudioQuality: String, CaseIterable, Identifiable {
     // NetEase's newer tiers; the API degrades to whatever the account can
     // actually stream, same as the official app's sheet.
     case jyeffect
+    case vivid
     case sky
     case jymaster
 
@@ -20,21 +21,44 @@ enum AudioQuality: String, CaseIterable, Identifiable {
         case .higher: return String(localized: "较高")
         case .exhigh: return String(localized: "极高 HQ")
         case .lossless: return String(localized: "无损 SQ")
-        case .hires: return String(localized: "高清臻音")
-        case .jyeffect: return String(localized: "臻音全景声")
+        case .hires: return String(localized: "高解析度无损")
+        case .jyeffect: return String(localized: "高清臻音")
+        case .vivid: return String(localized: "臻音全景声")
         case .sky: return String(localized: "沉浸环绕声")
         case .jymaster: return String(localized: "超清母带")
         }
     }
 
+    /// The English tier name the official sheet prints beside the Chinese one.
+    var englishName: String? {
+        switch self {
+        case .sky: return "Surround Audio"
+        case .jymaster: return "Master"
+        case .vivid: return "Audio Vivid"
+        case .jyeffect: return "Spatial Audio"
+        case .hires: return "Hi-Res"
+        default: return nil
+        }
+    }
+
+    /// The small tag printed next to a top card's title (沉浸环绕声 carries
+    /// 听感升级 in the official sheet).
+    var cardTag: String? {
+        switch self {
+        case .sky: return String(localized: "听感升级")
+        default: return nil
+        }
+    }
+
     var badge: String {
         switch self {
-        case .standard: return String(localized: "标准")
+        case .standard: return String(localized: "标")
         case .higher: return String(localized: "较高")
         case .exhigh: return "HQ"
         case .lossless: return "SQ"
-        case .hires: return String(localized: "高清臻音")
+        case .hires: return "Hi-Res"
         case .jyeffect: return String(localized: "臻音")
+        case .vivid: return String(localized: "全景声")
         case .sky: return String(localized: "环绕声")
         case .jymaster: return String(localized: "母带")
         }
@@ -47,20 +71,22 @@ enum AudioQuality: String, CaseIterable, Identifiable {
         case .higher: return String(localized: "192kbps")
         case .exhigh: return String(localized: "近 CD 音质的细节体验，最高320kbps")
         case .lossless: return String(localized: "高保真无损音质，最高48kHz/16bit")
-        case .hires: return String(localized: "高频细节还原与清晰沉浸感，96kHz/24bit")
-        case .jyeffect: return String(localized: "沉浸三维空间音频，最高7.1.4声道")
-        case .sky: return String(localized: "环绕音感，最高5.1声道")
+        case .hires: return String(localized: "更饱满清晰的高解析度音质，最高192kHz/24bit")
+        case .jyeffect: return String(localized: "高频细节还原与清晰沉浸感，96kHz/24bit")
+        case .vivid: return String(localized: "沉浸三维空间音频，最高7.1.4声道")
+        case .sky: return String(localized: "环绕音感 最高5.1声道")
         case .jymaster: return String(localized: "极致细节 192kHz/24bit")
         }
     }
 
     /// The badge shown beside the tier name: SVIP / VIP tiers follow the
-    /// official sheet; 标准 has none.
+    /// official sheet (臻音全景声、沉浸环绕声、超清母带 are SVIP; 高清臻音、
+    /// Hi-Res、无损 are VIP; the free tiers carry none).
     var tierBadge: String? {
         switch self {
-        case .jymaster, .sky, .jyeffect: return "SVIP"
-        case .hires, .lossless, .exhigh: return "VIP"
-        case .standard, .higher: return nil
+        case .jymaster, .sky, .vivid: return "SVIP"
+        case .jyeffect, .hires, .lossless: return "VIP"
+        case .standard, .higher, .exhigh: return nil
         }
     }
 
@@ -69,14 +95,18 @@ enum AudioQuality: String, CaseIterable, Identifiable {
         switch self {
         case .sky: return 0
         case .jymaster: return 1
-        case .jyeffect: return 2
-        case .hires: return 3
-        case .lossless: return 4
-        case .exhigh: return 5
-        case .higher: return 6
-        case .standard: return 7
+        case .vivid: return 2
+        case .jyeffect: return 3
+        case .hires: return 4
+        case .lossless: return 5
+        case .exhigh: return 6
+        case .higher: return 7
+        case .standard: return 8
         }
     }
+
+    /// 较高 exists in the API but the official sheet leaves it out.
+    var showsInSheet: Bool { self != .higher }
 }
 
 enum AppAppearance: String, CaseIterable, Identifiable {

@@ -108,11 +108,11 @@ struct SettingsView: View {
         Form {
             Section("播放") {
                 Picker("音质", selection: $settings.audioQuality) {
-                    ForEach(AudioQuality.allCases) { quality in
+                    ForEach(AudioQuality.allCases.filter(\.showsInSheet)) { quality in
                         Text(quality.displayName).tag(quality)
                     }
                 }
-                Text("无损、高清臻音、全景声与母带需黑胶 VIP，未开通时自动回落到可用音质；播放页与底部控制栏的音质标签可点开切换")
+                Text("无损、Hi-Res 与高清臻音需黑胶 VIP，全景声与母带需 SVIP，未开通时自动回落到可用音质；播放页与底部控制栏的音质标签可点开切换")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 #if os(iOS)

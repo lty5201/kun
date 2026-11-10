@@ -505,6 +505,7 @@ final class LuoxueSourceManager: ObservableObject {
             .lossless: ["flac", "320k", "128k"],
             .hires: ["flac24bit", "flac", "320k", "128k"],
             .jyeffect: ["flac24bit", "flac", "320k", "128k"],
+            .vivid: ["flac24bit", "flac", "320k", "128k"],
             .sky: ["flac24bit", "flac", "320k", "128k"],
             .jymaster: ["flac24bit", "flac", "320k", "128k"],
         ]
