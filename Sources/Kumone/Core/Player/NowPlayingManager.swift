@@ -12,6 +12,11 @@ final class NowPlayingManager {
     private var artworkTask: Task<Void, Never>?
     private var playbackStateCancellables: Set<AnyCancellable> = []
     private var info: [String: Any] = [:]
+    /// The track's real artist, kept so the Now Playing artist row can fall
+    /// back to it whenever no lyric line is current.
+    private var baseArtist = ""
+    /// The lyric line currently shown in the Now Playing artist row.
+    private var currentLyric = ""
     #if os(iOS)
     /// Binds the app's Now Playing state to its AVPlayer. The system's Now
     /// Playing / lock-screen / Dynamic Island surface launches the app behind
@@ -221,6 +226,9 @@ final class NowPlayingManager {
     }
 
     func updateMetadata(for track: Track, duration: TimeInterval) {
+        // A new track resets the lyric shown in the Now Playing artist row.
+        currentLyric = ""
+        baseArtist = track.artistNames
         #if os(iOS)
         // A session can lose its active slot while playback was stopped;
         // claim it again as soon as a new track is put up. The player may not
@@ -258,6 +266,22 @@ final class NowPlayingManager {
             }
         }
     }
+
+    #if os(iOS)
+    /// NetEase displays the current lyric in the system Now Playing artist
+    /// row. Mirror that behavior on iOS while retaining the real artist as a
+    /// fallback whenever lyrics are unavailable or the track changes.
+    /// The Dynamic Island compact view shows that artist row, so it reads
+    /// as a live lyric line scrolling with playback. Publishes through the
+    /// session's own info center, like the rest of this manager.
+    func updateCurrentLyric(_ lyric: String?) {
+        let value = lyric?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard value != currentLyric else { return }
+        currentLyric = value
+        info[MPMediaItemPropertyArtist] = value.isEmpty ? baseArtist : value
+        infoCenter.nowPlayingInfo = info
+    }
+    #endif
 
     func updateElapsed(_ elapsed: TimeInterval, rate: Double) {
         #if os(iOS)
