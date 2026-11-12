@@ -35,8 +35,8 @@ enum LyricsIslandAuthorization: Equatable {
 
 /// App-side owner of the lyrics Live Activity. iOS only; macOS has no island.
 @MainActor
-final class LyricsLiveActivityManager: ObservableObject {
-    static let shared = LyricsLiveActivityManager()
+public final class LyricsLiveActivityManager: ObservableObject {
+    public static let shared = LyricsLiveActivityManager()
 
     private var activity: Activity<LyricsLiveActivityAttributes>?
     private var lastState: LyricsLiveActivityAttributes.ContentState?
@@ -216,7 +216,7 @@ final class LyricsLiveActivityManager: ObservableObject {
     }
 
     /// Called from applicationWillTerminate / entering background while idle.
-    func endForAppShutdown() {
+    public func endForAppShutdown() {
         endActivity()
     }
 

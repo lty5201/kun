@@ -117,8 +117,8 @@ final class LyricsCursor: ObservableObject {
 }
 
 @MainActor
-final class PlayerService: ObservableObject {
-    static let shared = PlayerService()
+public final class PlayerService: ObservableObject {
+    public static let shared = PlayerService()
 
     // MARK: - Observable state
 
@@ -140,7 +140,7 @@ final class PlayerService: ObservableObject {
     @Published private(set) var currentTrack: Track?
     private var playbackAccountID: Int?
     @Published private(set) var source: PlaySource = .none
-    @Published private(set) var isPlaying = false
+    @Published public private(set) var isPlaying = false
     @Published private(set) var isBuffering = false
     @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var servedQuality: String?
