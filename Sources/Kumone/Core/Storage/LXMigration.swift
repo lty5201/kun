@@ -95,7 +95,7 @@ enum LXMigration {
         let filePath: String
         // Defaulted so manifests written before the flag existed still
         // decode (synthesized Decodable uses decodeIfPresent here).
-        let enabled: Bool = true
+        var enabled: Bool = true
 
         init(id: UUID = UUID(), name: String, originURL: String?, filePath: String, enabled: Bool) {
             self.id = id
