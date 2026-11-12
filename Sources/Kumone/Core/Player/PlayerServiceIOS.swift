@@ -193,6 +193,14 @@ final class PlayerService: ObservableObject {
     /// Why the last third-party resolution failed, so the unplayable toast
     /// can say more than just "VIP 专属".
     private var lastThirdPartyFailure: String?
+    /// The URL the last successful LX resolution returned, so a later item
+    /// failure can retry with it excluded instead of resolving the same
+    /// dead URL again. Reset per track in startPlaying.
+    private var lastThirdPartyURL: URL?
+    /// LX URLs that already failed to play for the current track. Passed as
+    /// exclusions on retry so each attempt resolves a different candidate.
+    /// Reset per track in startPlaying.
+    private var failedThirdPartyURLs = Set<String>()
     /// The resolve generation that already spent its one reload after a
     /// failed item, so a reload that fails too gives up instead of looping.
     private var itemRetryGeneration: Int?
@@ -751,6 +759,8 @@ final class PlayerService: ObservableObject {
         servedQuality = nil
         thirdPartySource = nil
         currentThirdPartyPlatform = nil
+        lastThirdPartyURL = nil
+        failedThirdPartyURLs = []
         itemStatusObservation?.invalidate()
         itemStatusObservation = nil
         isTrial = false
@@ -758,6 +768,14 @@ final class PlayerService: ObservableObject {
         scrobbled = false
         startScrobbled = false
         isPlaying = true
+        // One-time nudge: the island toggle defaults off and nothing in the
+        // player mentions it, so a user who never opens Settings > 歌词
+        // never learns it exists. Point at it once per install; never
+        // auto-enable.
+        if !SettingsManager.shared.lyricsOnIsland, !SettingsManager.shared.lyricsIslandNudgeShown {
+            SettingsManager.shared.lyricsIslandNudgeShown = true
+            ToastCenter.shared.show(String(localized: "想在灵动岛看歌词？去「设置 > 歌词」打开「歌词上岛」"))
+        }
         lyricsCursor.activeIndex = nil
         // Before the URL is even resolved: holds the bars still rather than
         // letting them fall back to the decorative animation for the moment it
@@ -879,11 +897,16 @@ final class PlayerService: ObservableObject {
             resolvedURL = URL(string: urlString.replacingOccurrences(of: "http://", with: "https://"))
         }
 
-        // The service refused — try the LX third-party source.
+        // The official route cannot play this song in full (no URL, or a
+        // trial clip only): fall back to the user's LX custom sources
+        // before giving up. This applies in every mode — including
+        // .official — because a VIP song the account cannot play is exactly
+        // the case the fallback exists for. It never fakes membership: LX
+        // resolves only from sources the user imported themselves.
         var thirdPartyAttempted = false
-        if resolvedURL == nil || data?.freeTrialInfo != nil, allowsThirdParty {
+        if resolvedURL == nil || data?.freeTrialInfo != nil {
             thirdPartyAttempted = true
-            if await resolveAndLoadThirdParty(track, generation: generation, resumeAt: resumeAt) { return }
+            if await resolveAndLoadThirdParty(track, generation: generation, resumeAt: resumeAt, allowOfficialMode: true) { return }
         }
         guard generation == resolveGeneration else { return }
 
@@ -921,9 +944,14 @@ final class PlayerService: ObservableObject {
         _ track: Track,
         generation: Int,
         requiresActivePlayback: Bool = false,
-        resumeAt: TimeInterval = 0
+        resumeAt: TimeInterval = 0,
+        excludingURLs: Set<String> = [],
+        allowOfficialMode: Bool = false
     ) async -> Bool {
-        guard SettingsManager.shared.playbackSourceMode != .official else { return false }
+        // The mode gate is skipped for the official-fallback path: when the
+        // official route cannot play a song in full, LX is the fallback in
+        // every mode (see resolveAndLoad). Direct LX retries keep the gate.
+        guard allowOfficialMode || SettingsManager.shared.playbackSourceMode != .official else { return false }
         guard generation == resolveGeneration,
               !requiresActivePlayback || isPlaying
         else { return false }
@@ -931,7 +959,7 @@ final class PlayerService: ObservableObject {
         let resolved: LXUserAPIService.ResolvedURL
         do {
             resolved = try await LXUserAPIService.shared.resolveMusicURL(
-                for: track, quality: SettingsManager.shared.audioQuality.lxType, forceThirdParty: true)
+                for: track, quality: SettingsManager.shared.audioQuality.lxType, excludingURLs: excludingURLs, forceThirdParty: true)
         } catch {
             lastThirdPartyFailure = error.localizedDescription
             ToastCenter.shared.show(String(localized: "第三方音源解析失败：\(error.localizedDescription)"))
@@ -942,6 +970,7 @@ final class PlayerService: ObservableObject {
         else { return false }
 
         lastThirdPartyFailure = nil
+        lastThirdPartyURL = resolved.url
         currentThirdPartyPlatform = resolved.platform
         thirdPartySource = resolved.platform ?? "LX"
         servedQuality = normalizedLevel(resolved.quality)
@@ -1208,10 +1237,19 @@ final class PlayerService: ObservableObject {
         }
 
         Task {
+            // The URL that just failed goes on the exclusion list, so the
+            // retry resolves a different candidate instead of the same dead
+            // URL again. The set accumulates per track (reset in
+            // startPlaying), so a persistently bad source terminates in
+            // handleUnplayable instead of looping.
+            if let failedURL = lastThirdPartyURL {
+                failedThirdPartyURLs.insert(failedURL.absoluteString)
+            }
             let loaded = await resolveAndLoadThirdParty(
                 track,
                 generation: generation,
-                requiresActivePlayback: true
+                requiresActivePlayback: true,
+                excludingURLs: failedThirdPartyURLs
             )
             guard isPlaying else { return }
             guard loaded else {
@@ -1261,7 +1299,7 @@ final class PlayerService: ObservableObject {
             }
             Task {
                 guard SettingsManager.shared.canResolveUnblockedTracks,
-                      await resolveAndLoadThirdParty(track, generation: generation) else {
+                      await resolveAndLoadThirdParty(track, generation: generation, allowOfficialMode: true) else {
                     guard generation == resolveGeneration else { return }
                     handleUnplayable(track)
                     return

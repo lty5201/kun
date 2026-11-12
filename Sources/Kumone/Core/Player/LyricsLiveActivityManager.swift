@@ -187,6 +187,23 @@ public final class LyricsLiveActivityManager: ObservableObject {
 
     private func startActivity(trackID: Int, state: LyricsLiveActivityAttributes.ContentState) {
         guard authorizationStatus() == .granted else { return }
+        // A previous launch may have left a system activity behind:
+        // force-quit runs no end code, so the old activity lingers until
+        // its stale date. A new request while it exists is refused by the
+        // guard below and the island would stay stuck on the old song, so
+        // end the leftovers first and retry with this state once they are
+        // gone. (The retry and lyricDidChange both run on the MainActor,
+        // so two starts cannot interleave and duplicate the activity.)
+        let leftovers = Activity<LyricsLiveActivityAttributes>.activities.filter { $0.id != activity?.id }
+        if !leftovers.isEmpty {
+            Task {
+                for old in leftovers {
+                    await old.end(ActivityContent(state: old.content.state, staleDate: nil), dismissalPolicy: .immediate)
+                }
+                self.startActivity(trackID: trackID, state: state)
+            }
+            return
+        }
         guard Activity<LyricsLiveActivityAttributes>.activities.isEmpty else { return }
         do {
             activity = try Activity.request(
@@ -230,10 +247,13 @@ public final class LyricsLiveActivityManager: ObservableObject {
     }
 
     private static func staleDate() -> Date {
-        // Five minutes: if the app dies without ending the activity, the Lock
-        // Screen marks the lyrics stale quickly instead of showing a
-        // fresh-looking frozen line for hours.
-        Date().addingTimeInterval(300)
+        // Sixty seconds: if the app dies without ending the activity (a
+        // force-quit runs no end code), the island goes stale and is removed
+        // within a minute instead of lingering for five. While the app is
+        // alive and playing this is never reached: every update carries a
+        // fresh stale date, and updates flow continuously because
+        // ContentState includes progress, which moves about twice a second.
+        Date().addingTimeInterval(60)
     }
 }
 

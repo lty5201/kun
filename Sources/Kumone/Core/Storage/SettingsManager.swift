@@ -289,7 +289,7 @@ enum PlaybackSourceMode: String, CaseIterable, Identifiable {
         case .automatic:
             return String(localized: "优先使用已登录账号的完整音频；账号不可用时按已启用的 LX 音源顺序回退")
         case .official:
-            return String(localized: "网易云、QQ 音乐、酷狗按对应平台使用已登录账号的官方播放；未登录或不可用时不会偷偷换源")
+            return String(localized: "网易云、QQ 音乐、酷狗按对应平台使用已登录账号的官方播放；官方无法完整播放的 VIP 歌曲会尝试已导入的第三方音源")
         case .thirdParty:
             return String(localized: "只使用已导入并启用的 LX 音源")
         }
@@ -400,6 +400,7 @@ final class SettingsManager: ObservableObject {
         static let autoCheckUpdates = "settings.autoCheckUpdates"
         static let desktopLyrics = "settings.showDesktopLyrics"
         static let lyricsOnIsland = "settings.lyricsOnIsland"
+        static let lyricsIslandNudgeShown = "settings.lyricsIslandNudgeShown"
         static let lyricsIslandLocationKeepAlive = "settings.lyricsIslandLocationKeepAlive"
         #if os(macOS)
         static let menuBarPlayer = "settings.showMenuBarPlayer"
@@ -654,6 +655,11 @@ final class SettingsManager: ObservableObject {
     @Published var lyricsOnIsland: Bool {
         didSet { UserDefaults.standard.set(lyricsOnIsland, forKey: Keys.lyricsOnIsland) }
     }
+    /// Whether the one-time "歌词上岛 is off" nudge has been shown. Set the
+    /// first time a song starts while the toggle is off; never auto-enables.
+    @Published var lyricsIslandNudgeShown: Bool {
+        didSet { UserDefaults.standard.set(lyricsIslandNudgeShown, forKey: Keys.lyricsIslandNudgeShown) }
+    }
     /// Opt-in location keep-alive for the lyrics Live Activity. Default off.
     @Published var lyricsIslandLocationKeepAlive: Bool {
         didSet { UserDefaults.standard.set(lyricsIslandLocationKeepAlive, forKey: Keys.lyricsIslandLocationKeepAlive) }
@@ -846,6 +852,7 @@ final class SettingsManager: ObservableObject {
         autoCheckUpdates = defaults.object(forKey: Keys.autoCheckUpdates) as? Bool ?? true
         showDesktopLyrics = defaults.object(forKey: Keys.desktopLyrics) as? Bool ?? false
         lyricsOnIsland = defaults.object(forKey: Keys.lyricsOnIsland) as? Bool ?? false
+        lyricsIslandNudgeShown = defaults.object(forKey: Keys.lyricsIslandNudgeShown) as? Bool ?? false
         lyricsIslandLocationKeepAlive = defaults.object(forKey: Keys.lyricsIslandLocationKeepAlive) as? Bool ?? false
         #if os(macOS)
         automixEnabled = defaults.object(forKey: Keys.automix) as? Bool ?? false
