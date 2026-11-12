@@ -1,0 +1,19 @@
+// Extension.xcconfig — LyricsLiveActivity target only.
+//
+// The project-level Shared.xcconfig sets app-wide identity values that are
+// correct for the KumoneIOS app target but WRONG for this extension:
+//   PRODUCT_BUNDLE_IDENTIFIER = sb.moe.kumone-ios
+//   INFOPLIST_FILE = Config/Info.plist (the app's plist, no NSExtension)
+//   GENERATE_INFOPLIST_FILE = YES
+//   INFOPLIST_KEY_CFBundleDisplayName = Kumone
+// With those, the built .appex reused the app's bundle ID
+// (sb.moe.kumone-ios) and the app's Info.plist (no NSExtension), so iOS
+// refused to install the app ("无法安装"). This file #includes Shared and
+// then overrides just the identity settings, so the extension is built with
+// its own bundle ID and its own Info.plist (which declares the
+// com.apple.widgetkit-extension point).
+#include "Shared.xcconfig"
+
+PRODUCT_BUNDLE_IDENTIFIER = sb.moe.kumone-ios.LyricsLiveActivity
+INFOPLIST_FILE = LyricsLiveActivity/Info.plist
+GENERATE_INFOPLIST_FILE = NO

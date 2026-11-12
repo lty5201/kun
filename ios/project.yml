@@ -53,6 +53,10 @@ targets:
       - LyricsLiveActivity
     info:
       path: LyricsLiveActivity/Info.plist
+    configFiles:
+      Debug: Config/Extension.xcconfig
+      Release: Config/Extension.xcconfig
+      TestFlight: Config/Extension.xcconfig
     dependencies:
       - package: KumoneIOSPackage
         product: KumoneCore
