@@ -8,6 +8,19 @@ import UIKit
 /// Stateless factory that builds CarPlay templates.
 enum CarPlayTemplateFactory {
 
+    /// Search entry row for the Recommend tab. Tapping it pushes the
+    /// CPSearchTemplate; the search itself lives in CarPlayConnector.
+    static func searchEntrySection(onTap: @escaping () -> Void) -> [CPListSection] {
+        let item = CPListItem(text: String(localized: "搜索音乐"), detailText: String(localized: "搜索歌曲"))
+        item.accessoryType = .none
+        item.setImage(UIImage(systemName: "magnifyingglass"))
+        item.handler = { _, completion in
+            onTap()
+            completion()
+        }
+        return [CPListSection(items: [item])]
+    }
+
     // MARK: - Playlist row → CPListSection
 
     /// Converts Recommend/Curated playlists into a CPListSection; tapping a row pushes the playlist detail.

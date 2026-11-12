@@ -50,6 +50,8 @@ struct PlayContext: Codable, Hashable {
         case playlist, album, artist
         /// Fixed per-account entry points, each reloaded from its own API.
         case daily, cloud, recents, heartbeat, fm
+        /// Search results are an ad-hoc list, not a reloadable place.
+        case search
     }
 
     let kind: Kind
@@ -74,6 +76,7 @@ struct PlayContext: Codable, Hashable {
     static var recents: PlayContext { .init(kind: .recents, id: 0, name: String(localized: "最近播放")) }
     static var heartbeat: PlayContext { .init(kind: .heartbeat, id: 0, name: String(localized: "心动模式")) }
     static var fm: PlayContext { .init(kind: .fm, id: 0, name: String(localized: "私人漫游")) }
+    static var search: PlayContext { .init(kind: .search, id: 0, name: String(localized: "搜索")) }
 
     /// Identity is the place, not its current title — a renamed playlist is
     /// still the same entry in the recents list.
@@ -3859,6 +3862,10 @@ final class PlayerService: ObservableObject {
                   let seed = AccountStore.shared.likedTrackIDs.randomElement() else { return nil }
             let tracks = try await MusicAPI.intelligenceList(songID: seed, playlistID: liked.id)
             return (tracks, .playlist(liked.id))
+        case .search:
+            // Search results are already in hand when played; a saved search
+            // session has no place to reload from, so Recents cannot replay it.
+            return nil
         case .playlist:
             let response = try await MusicAPI.playlistDetail(id: context.id)
             var tracks = response.playlist.tracks

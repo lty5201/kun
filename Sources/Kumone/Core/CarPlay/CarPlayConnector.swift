@@ -23,6 +23,14 @@ public final class CarPlayConnector: NSObject {
     private var libraryTab: CPListTemplate?
     private weak var playbackQueueTemplate: CPListTemplate?
 
+    /// Latest CarPlay search results, kept parallel to the CPListItems handed
+    /// to the search template so a tap can resolve back to its Track.
+    /// Matched by object identity in the search delegate.
+    private var searchResults: [(item: CPListItem, track: Track)] = []
+    /// Monotonic generation: only the newest keystroke's search may publish
+    /// results; older responses complete with [] instead of overwriting.
+    private var searchGeneration = 0
+
     private var content = CarPlayContentStore()
     private var cancellables: Set<AnyCancellable> = []
     private var loadTask: Task<Void, Never>?
@@ -432,6 +440,11 @@ public final class CarPlayConnector: NSObject {
         var sections: [CPListSection] = []
         let loggedIn = AccountStore.shared.isLoggedIn
 
+        // 0. Search — always visible, logged in or not.
+        sections.append(contentsOf: CarPlayTemplateFactory.searchEntrySection(
+            onTap: { [weak self] in self?.presentSearch() }
+        ))
+
         // 1. Today's picks — feature cards
         if loggedIn {
             sections.append(contentsOf: CarPlayTemplateFactory.recommendFeatureSections(
@@ -780,6 +793,15 @@ public final class CarPlayConnector: NSObject {
 
     // MARK: - Playlist detail
 
+    /// Pushes the CarPlay search template. The template is retained by the
+    /// interface controller while presented; the delegate is this singleton.
+    private func presentSearch() {
+        guard let controller = interfaceController else { return }
+        searchGeneration += 1
+        searchResults = []
+        controller.pushTemplate(CPSearchTemplate(delegate: self), animated: true, completion: nil)
+    }
+
     /// Pushes the playlist detail template: empty template with title first, then populated once tracks load.
     private func pushPlaylistDetail(_ playlist: PlaylistSummary) {
         pushTracks(title: playlist.name, context: .playlist(id: playlist.id, name: playlist.name))
@@ -822,6 +844,74 @@ extension CarPlayConnector: CPNowPlayingTemplateObserver {
 
     public nonisolated func nowPlayingTemplateAlbumArtistButtonTapped(_ nowPlayingTemplate: CPNowPlayingTemplate) {
         Task { @MainActor in self.showAlbumOrArtistOfCurrentTrack() }
+    }
+}
+
+// MARK: - CPSearchTemplateDelegate
+
+// CPSearchTemplateDelegate is not @MainActor-annotated, so the callbacks are
+// declared nonisolated and hop back onto the main actor themselves — same
+// pattern as CPNowPlayingTemplateObserver above.
+extension CarPlayConnector: CPSearchTemplateDelegate {
+
+    public nonisolated func searchTemplate(
+        _ searchTemplate: CPSearchTemplate,
+        updatedSearchText searchText: String,
+        completionHandler: @escaping ([CPListItem]) -> Void
+    ) {
+        // Every keystroke gets exactly one completionHandler call. No debounce
+        // cancellation: cancelling would leave a previous call unanswered, and
+        // CarPlay waits on it. Stale responses complete with [] instead.
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task { @MainActor in
+            guard !query.isEmpty else {
+                self.searchResults = []
+                completionHandler([])
+                return
+            }
+            self.searchGeneration += 1
+            let generation = self.searchGeneration
+            // Light debounce so fast typing does not fire a request per keystroke.
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard generation == self.searchGeneration else {
+                completionHandler([])
+                return
+            }
+            do {
+                let result = try await MusicAPI.search(query, type: .songs, limit: 30)
+                guard generation == self.searchGeneration else {
+                    completionHandler([])
+                    return
+                }
+                var pairs: [(CPListItem, Track)] = []
+                for track in result.songs ?? [] {
+                    let item = CPListItem(text: track.name, detailText: track.artistNames)
+                    item.accessoryType = .none
+                    CarPlayTemplateFactory.fillArtwork(item, from: track.album.picUrl)
+                    pairs.append((item, track))
+                }
+                self.searchResults = pairs
+                completionHandler(pairs.map(\.0))
+            } catch {
+                completionHandler([])
+            }
+        }
+    }
+
+    public nonisolated func searchTemplate(
+        _ searchTemplate: CPSearchTemplate,
+        selectedResult item: CPListItem,
+        completionHandler: @escaping () -> Void
+    ) {
+        Task { @MainActor in
+            defer { completionHandler() }
+            guard let pair = self.searchResults.first(where: { $0.item === item }) else { return }
+            Self.playLoadedTracks(
+                self.searchResults.map(\.track),
+                context: .search,
+                startAt: pair.track
+            )
+        }
     }
 }
 #endif
