@@ -462,6 +462,16 @@ final class PlayerService: ObservableObject {
         if index != lyricsCursor.activeIndex {
             lyricsCursor.activeIndex = index
         }
+        // Before the first timed line starts, use the first lyric line
+        // instead of leaving the system Now Playing artist row with a
+        // stale value. On iOS the Dynamic Island compact view shows that
+        // artist row, so this is what makes the current lyric line scroll
+        // with playback.
+        let snapshotLyric = index.flatMap { lyrics?.lines[$0].text }
+            ?? lyrics?.lines.first?.text
+        #if os(iOS)
+        NowPlayingManager.shared.updateCurrentLyric(snapshotLyric)
+        #endif
     }
 
     func seek(to seconds: TimeInterval, completion: (@MainActor () -> Void)? = nil) {
