@@ -48,7 +48,7 @@ jobs:
           fi
           APP_NAME="$(basename "$APP_PATH")"
           cp -R "$APP_PATH" Payload/
-          (cd Payload && zip -qr ../dist/Kun-ios.ipa .)
+          zip -qr dist/Kun-ios.ipa Payload
 
       - name: Upload the IPA artifact
         uses: actions/upload-artifact@v4
