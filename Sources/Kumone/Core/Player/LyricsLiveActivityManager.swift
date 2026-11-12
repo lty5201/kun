@@ -25,11 +25,17 @@ import Foundation
 import UIKit
 
 /// Result of the first-time authorization check for 歌词上岛.
+/// Only the Live Activities switch itself gates the toggle: "更频繁更新"
+/// (frequent pushes) only affects how often the island may refresh, so it
+/// warns instead of blocking — blocking on it left users with the toggle on
+/// but no island at all when the system switch was off, with no feedback.
 enum LyricsIslandAuthorization: Equatable {
-    /// Live Activities enabled (and, on iOS 17.2+, frequent updates enabled).
+    /// Live Activities enabled. The activity may start; frequent updates
+    /// may still be off (see frequentUpdatesEnabled), in which case
+    /// updates are throttled but lyrics still show.
     case granted
-    /// Live Activities disabled, or frequent updates disabled: the caller must
-    /// show an alert with a "去设置" button that opens the system Settings.
+    /// Live Activities disabled: the caller must show an alert with a
+    /// "去设置" button that opens the system Settings.
     case needsSettings(reason: String)
 }
 
@@ -75,18 +81,27 @@ public final class LyricsLiveActivityManager: ObservableObject {
     // MARK: - Toggle + authorization
 
     /// First-time enable flow. Checks ActivityAuthorizationInfo before anything
-    /// starts; never starts the activity while disabled.
+    /// starts; never starts the activity while Live Activities are disabled.
+    /// "更频繁更新" is NOT required here: it only throttles refreshes, and
+    /// gating on it meant the island silently never started whenever the
+    /// system switch was off (the reference v22 build shows lyrics with
+    /// Live Activities on alone). The toggle flow warns about it instead.
     func authorizationStatus() -> LyricsIslandAuthorization {
         let info = ActivityAuthorizationInfo()
         guard info.areActivitiesEnabled else {
             return .needsSettings(reason: "当前未开启实时活动，灵动岛歌词无法显示。请在系统设置中为 Kumone 开启「实时活动」。")
         }
-        if #available(iOS 17.2, *) {
-            guard info.frequentPushesEnabled else {
-                return .needsSettings(reason: "实时活动已开启，但「更频繁更新」未开启，歌词更新会被系统节流、容易停住。请在系统设置中为 Kumone 开启「更频繁更新」。")
-            }
-        }
         return .granted
+    }
+
+    /// Whether "更频繁更新" is on (iOS 17.2+). Off means the system may
+    /// throttle lyric refreshes (the island can lag or stall), but lyrics
+    /// still show. Below iOS 17.2 there is no such switch, so this is true.
+    var frequentUpdatesEnabled: Bool {
+        if #available(iOS 17.2, *) {
+            return ActivityAuthorizationInfo().frequentPushesEnabled
+        }
+        return true
     }
 
     /// Opens the system Settings app at this app's page.
@@ -185,8 +200,22 @@ public final class LyricsLiveActivityManager: ObservableObject {
 
     // MARK: - Lifecycle
 
+    /// Whether a start failure has already been surfaced this launch, so a
+    /// refused start (called on every lyric tick while nothing runs) toasts
+    /// once instead of spamming. Reset when an activity starts.
+    private var startFailureNoted = false
+
     private func startActivity(trackID: Int, state: LyricsLiveActivityAttributes.ContentState) {
-        guard authorizationStatus() == .granted else { return }
+        guard authorizationStatus() == .granted else {
+            // Was silent: the toggle on + a black island with no feedback.
+            // Note it once so the user knows to enable Live Activities.
+            if !startFailureNoted {
+                startFailureNoted = true
+                DiagnosticLogStore.shared.append(level: .warning, category: "灵动岛", message: "启动实时活动被系统拒绝", detail: "系统设置中未开启实时活动。")
+                ToastCenter.shared.show(String(localized: "灵动岛未启动：请在系统设置中为 Kumone 开启「实时活动」"))
+            }
+            return
+        }
         // A previous launch may have left a system activity behind:
         // force-quit runs no end code, so the old activity lingers until
         // its stale date. A new request while it exists is refused by the
@@ -210,9 +239,15 @@ public final class LyricsLiveActivityManager: ObservableObject {
                 attributes: LyricsLiveActivityAttributes(trackID: trackID),
                 content: ActivityContent(state: state, staleDate: Self.staleDate())
             )
+            startFailureNoted = false
             locationKeepAlive.startIfEnabled()
         } catch {
             activity = nil
+            if !startFailureNoted {
+                startFailureNoted = true
+                DiagnosticLogStore.shared.append(level: .warning, category: "灵动岛", message: "启动实时活动失败", detail: error.localizedDescription)
+                ToastCenter.shared.show(String(localized: "灵动岛启动失败，请稍后重试"))
+            }
         }
     }
 

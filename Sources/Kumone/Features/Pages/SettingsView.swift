@@ -206,6 +206,13 @@ struct SettingsView: View {
                                 case .granted:
                                     settings.lyricsOnIsland = true
                                     PlayerService.shared.refreshLyricsIsland()
+                                    // "更频繁更新" off only throttles refreshes — it must
+                                    // not block the toggle (that left the island black
+                                    // with no feedback). Enable anyway and warn.
+                                    if !LyricsLiveActivityManager.shared.frequentUpdatesEnabled {
+                                        liveActivityAlertMessage = "实时活动已开启，但「更频繁更新」未开启，歌词更新会被系统节流、可能停住。灵动岛已开启，建议在系统设置中为 Kumone 开启「更频繁更新」。"
+                                        showLiveActivityAlert = true
+                                    }
                                 case .needsSettings(let reason):
                                     liveActivityAlertMessage = reason
                                     showLiveActivityAlert = true
