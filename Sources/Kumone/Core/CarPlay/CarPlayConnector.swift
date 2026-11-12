@@ -799,7 +799,11 @@ public final class CarPlayConnector: NSObject {
         guard let controller = interfaceController else { return }
         searchGeneration += 1
         searchResults = []
-        controller.pushTemplate(CPSearchTemplate(delegate: self), animated: true, completion: nil)
+        // iOS 26 SDK: CPSearchTemplate has no init(delegate:) — create it
+        // empty and assign the delegate (read/write in this SDK).
+        let searchTemplate = CPSearchTemplate()
+        searchTemplate.delegate = self
+        controller.pushTemplate(searchTemplate, animated: true, completion: nil)
     }
 
     /// Pushes the playlist detail template: empty template with title first, then populated once tracks load.

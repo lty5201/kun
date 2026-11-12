@@ -1287,7 +1287,14 @@ final class LXUserAPIService: ObservableObject {
 
         if primary == "sd" {
             values.append(contentsOf: ["wy", "kw", "kg", "tx", "mg"])
-        } else if SettingsManager.shared.enableSourcePlatformFallback {
+        } else {
+            // Cross-platform fallback: a track from one catalogue can be
+            // matched on another platform (see LXCatalogService). The
+            // multi-pass resolver below relies on these candidates for its
+            // cross-platform pass. (An earlier draft gated this on a
+            // SettingsManager.enableSourcePlatformFallback setting that was
+            // never added to SettingsManager; the LX engine's behaviour is
+            // fallback-on, so the gate is dropped rather than invented.)
             values.append(contentsOf: ["wy", "kw", "kg", "tx", "mg"])
         }
         var seen = Set<String>()

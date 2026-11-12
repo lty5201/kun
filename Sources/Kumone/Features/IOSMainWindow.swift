@@ -84,7 +84,7 @@ public struct IOSMainWindow: View {
                     do {
                         // Coordinated read so an iCloud placeholder downloads first.
                         var data: Data?
-                        var readError: Error?
+                        var readError: NSError?
                         let coordinator = NSFileCoordinator()
                         coordinator.coordinate(readingItemAt: url, options: [], error: &readError) { readURL in
                             data = try? Data(contentsOf: readURL)

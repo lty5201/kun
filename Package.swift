@@ -37,7 +37,7 @@ let cltTestingLinkerSettings: [LinkerSetting] = cltHasTesting
 let package = Package(
     name: "Kumone",
     defaultLocalization: "zh-Hans",
-    platforms: [.macOS("15.0"), .iOS("16.1")],
+    platforms: [.macOS("15.0"), .iOS("16.2")],
     products: [
         .executable(name: "Kumone", targets: ["KumoneLauncher"]),
         .library(name: "KumoneCore", targets: ["KumoneCore"]),

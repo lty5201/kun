@@ -18,10 +18,14 @@
 //         "lx.enabledSources" / "lx.selectedSource" UserDefaults keys.
 //
 // This file is intentionally self-contained: it does NOT reference
-// LXSourceStore (owned by another group) so it compiles in kun today.
+// LXSourceStore (owned by another group, and `#if os(iOS)` while this file
+// also compiles for macOS) so it compiles in kun today.
 // LXSourceRecord below is field-for-field identical to Moumusic's
-// LXSourceStore.Source; once LXSourceStore lands, this migration can encode
-// [LXSourceStore.Source] instead and this local struct can be deleted.
+// LXSourceStore.Source; the local struct stays for the reason above.
+// The retired Luoxue manifest shape is likewise re-declared locally
+// (LegacyLuoxueInstalledSource) and the script-header parser is local
+// (scriptMetadata(in:)) — the deleted Luoxue model files are not
+// referenced anywhere in this file.
 //
 // Safety contract (do not weaken it):
 // - Never deletes, moves or overwrites luoxue-sources.json or any .js file.
@@ -63,6 +67,9 @@ enum LXMigration {
     /// Mirrors Moumusic's LXSourceStore.Source exactly (same fields, same
     /// order, same JSON key names). Encoded with a plain JSONEncoder so the
     /// file LXSourceStore reads is byte-compatible with Moumusic's.
+    /// NOTE: LXSourceStore has since landed, but it is `#if os(iOS)` while
+    /// this file also compiles for macOS, so this local record stays — the
+    /// migration cannot reference LXSourceStore.Source here.
     private struct LXSourceRecord: Codable {
         let id: String
         let name: String
@@ -72,6 +79,62 @@ enum LXMigration {
         let homepage: String
         let script: String
         let sourceURL: String?
+    }
+
+    /// Shape of kun's retired Luoxue install manifest (luoxue-sources.json),
+    /// as written by the deleted LuoxueSourceManager. Defined locally here —
+    /// NOT resurrected from the deleted LuoxueSourceModels.swift — so the
+    /// one-time migration can still read manifests written before the LX
+    /// port. Unknown keys in old manifests (e.g. `contentHash`) are ignored
+    /// by Decodable; `enabled` defaults to true so manifests written before
+    /// that flag existed still decode.
+    private struct LegacyLuoxueInstalledSource: Decodable {
+        let id: UUID
+        let name: String
+        let originURL: String?
+        let filePath: String
+        // Defaulted so manifests written before the flag existed still
+        // decode (synthesized Decodable uses decodeIfPresent here).
+        let enabled: Bool = true
+
+        init(id: UUID = UUID(), name: String, originURL: String?, filePath: String, enabled: Bool) {
+            self.id = id
+            self.name = name
+            self.originURL = originURL
+            self.filePath = filePath
+            self.enabled = enabled
+        }
+    }
+
+    /// Parses `@name` / `@description` / `@version` / `@author` comment
+    /// headers out of a script (same rule the LX importer uses). Replaces
+    /// the deleted LuoxueScriptMetadata.meta(in:). Only keys actually
+    /// present in the script are returned, so the caller's `??` fallbacks
+    /// (installed display name, "") keep working.
+    private static func scriptMetadata(in script: String) -> [String: String] {
+        func value(_ key: String) -> String {
+            for line in script.components(separatedBy: .newlines) {
+                guard let range = line.range(of: "@\(key)", options: .caseInsensitive) else { continue }
+                let suffix = line[range.upperBound...]
+                if let first = suffix.first,
+                   !first.isWhitespace, first != ":", first != "=" {
+                    continue
+                }
+                var result = suffix.trimmingCharacters(in: .whitespacesAndNewlines)
+                if result.first == ":" || result.first == "=" {
+                    result.removeFirst()
+                    result = result.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                if !result.isEmpty { return result }
+            }
+            return ""
+        }
+        var out: [String: String] = [:]
+        for key in ["name", "description", "version", "author"] {
+            let v = value(key)
+            if !v.isEmpty { out[key] = v }
+        }
+        return out
     }
 
     /// One-time, idempotent, non-throwing migration. See the file header for
@@ -91,7 +154,7 @@ enum LXMigration {
         }
 
         guard let manifest = try? Data(contentsOf: luoxueManifestURL),
-              let installed = try? JSONDecoder().decode([LuoxueInstalledSource].self, from: manifest) else {
+              let installed = try? JSONDecoder().decode([LegacyLuoxueInstalledSource].self, from: manifest) else {
             // Distinguish "no manifest" from "corrupt manifest": only the
             // former delegates to the single-script path (which marks the run
             // done when there is nothing at all). A corrupt manifest is left
@@ -178,7 +241,7 @@ enum LXMigration {
 
     // MARK: - Record construction
 
-    private static func record(for entry: LuoxueInstalledSource, script: String) -> LXSourceRecord {
+    private static func record(for entry: LegacyLuoxueInstalledSource, script: String) -> LXSourceRecord {
         // Display metadata comes from the script's own @name/@description/
         // @version/@author comment headers when present (same parser kun's
         // importer already uses); the installed display name is the fallback.
@@ -189,7 +252,7 @@ enum LXMigration {
         // `homepage` has no kun equivalent and stays empty; `sourceURL` keeps
         // the download URL the script was imported from (metadata only —
         // playback always uses the inlined local script).
-        let meta = LuoxueScriptMetadata.meta(in: script)
+        let meta = scriptMetadata(in: script)
         return LXSourceRecord(
             id: entry.id.uuidString,
             name: meta["name"] ?? entry.name,
@@ -238,7 +301,7 @@ enum LXMigration {
         guard let script = readScript(atPath: path, name: URL(fileURLWithPath: path).lastPathComponent) else {
             return
         }
-        let entry = LuoxueInstalledSource(
+        let entry = LegacyLuoxueInstalledSource(
             name: URL(fileURLWithPath: path).lastPathComponent,
             originURL: nil, filePath: path, enabled: true)
         let record = record(for: entry, script: script)
@@ -260,7 +323,7 @@ enum LXMigration {
     /// When the manifest decoded fine, the legacy key is only used if its path
     /// is not already one of the manifest entries.
     private static func legacySingleScriptRecord(
-        excluding installed: [LuoxueInstalledSource]
+        excluding installed: [LegacyLuoxueInstalledSource]
     ) -> LXSourceRecord? {
         guard let path = UserDefaults.standard.string(forKey: SettingsManager.Keys.luoxueScriptPath),
               !installed.contains(where: { $0.filePath == path }),
@@ -268,7 +331,7 @@ enum LXMigration {
               let script = readScript(atPath: path, name: URL(fileURLWithPath: path).lastPathComponent) else {
             return nil
         }
-        let entry = LuoxueInstalledSource(
+        let entry = LegacyLuoxueInstalledSource(
             name: URL(fileURLWithPath: path).lastPathComponent,
             originURL: nil, filePath: path, enabled: true)
         return record(for: entry, script: script)

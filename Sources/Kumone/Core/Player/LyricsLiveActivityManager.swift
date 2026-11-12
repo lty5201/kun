@@ -122,7 +122,7 @@ final class LyricsLiveActivityManager: ObservableObject {
         state.hasCover = currentHasCover
         guard state != lastState else { return }
         lastState = state
-        Task { [activity] in try? await activity?.update(ActivityContent(state: state, staleDate: Self.staleDate())) }
+        Task { [activity] in await activity?.update(ActivityContent(state: state, staleDate: Self.staleDate())) }
     }
 
     /// A new track starts with the fallback color and no cover until its own
@@ -163,7 +163,7 @@ final class LyricsLiveActivityManager: ObservableObject {
         if let activity {
             // New song => new activity; same song => update in place.
             if activity.attributes.trackID == track.id {
-                Task { try? await activity.update(ActivityContent(state: state, staleDate: Self.staleDate())) }
+                Task { await activity.update(ActivityContent(state: state, staleDate: Self.staleDate())) }
             } else {
                 endActivity()
                 startActivity(trackID: track.id, state: state)
@@ -180,7 +180,7 @@ final class LyricsLiveActivityManager: ObservableObject {
     func refreshActivity() {
         guard let state = lastState, let activity else { return }
         guard SettingsManager.shared.lyricsOnIsland, state.isPlaying else { return }
-        Task { try? await activity.update(ActivityContent(state: state, staleDate: Self.staleDate())) }
+        Task { await activity.update(ActivityContent(state: state, staleDate: Self.staleDate())) }
     }
 
     // MARK: - Lifecycle
