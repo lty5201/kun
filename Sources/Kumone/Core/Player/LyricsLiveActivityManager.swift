@@ -247,13 +247,18 @@ public final class LyricsLiveActivityManager: ObservableObject {
     }
 
     private static func staleDate() -> Date {
-        // Sixty seconds: if the app dies without ending the activity (a
-        // force-quit runs no end code), the island goes stale and is removed
-        // within a minute instead of lingering for five. While the app is
+        // Fifteen seconds: if the app dies without ending the activity (a
+        // force-quit runs no end code — applicationWillTerminate never fires),
+        // the island goes stale and is removed within ~15s instead of
+        // lingering for a minute after the app is gone. While the app is
         // alive and playing this is never reached: every update carries a
         // fresh stale date, and updates flow continuously because
-        // ContentState includes progress, which moves about twice a second.
-        Date().addingTimeInterval(60)
+        // ContentState includes progress, which moves about twice a second
+        // (background audio keeps the app running, so updates keep flowing
+        // while music plays in the background too). A stale window shorter
+        // than this would risk the island vanishing mid-song if the system
+        // ever throttles updates; 15s is the balance.
+        Date().addingTimeInterval(15)
     }
 }
 

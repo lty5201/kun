@@ -1698,16 +1698,21 @@ final class LXUserAPIService: ObservableObject {
     }
 
     /// The protocol token for a picker tier.
+    /// Callers pass `AudioQuality.lxType` ("flac", "flac24bit", "jymaster",
+    /// "320k", "128k", ...), NOT the enum raw values — the lxType spellings
+    /// must map to themselves, otherwise every tier above 320k silently
+    /// collapsed to "320k" via the default case (the source was never asked
+    /// for FLAC even when it declared it). Raw values are kept as fallback.
     private static func requestedToken(for quality: String) -> String {
         switch quality {
-        case "master": return "jymaster"
+        case "master", "jymaster": return "jymaster"
         case "atmos": return "atmos"
         case "dolby": return "dolby"
         case "surround": return "surround"
-        case "standard": return "128k"
-        case "higher", "exhigh": return "320k"
-        case "lossless": return "flac"
-        case "hires": return "flac24bit"
+        case "standard", "128k": return "128k"
+        case "higher", "exhigh", "320k": return "320k"
+        case "lossless", "flac": return "flac"
+        case "hires", "flac24bit": return "flac24bit"
         default: return "320k"
         }
     }
