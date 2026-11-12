@@ -59,8 +59,27 @@ public struct IOSMainWindow: View {
             // Files app ▸ 长按 .js ▸ 分享 ▸ 零音乐: import the script directly.
             .onOpenURL { url in
                 Task {
-                    let message = await LuoxueSourceManager.shared.importOpenedFile(at: url)
-                    toasts.show(message)
+                    // A URL the app itself already handles (e.g. the
+                    // kumone://lyrics-refresh deep link) is not a source file.
+                    guard url.isFileURL else { return }
+                    let name = url.lastPathComponent
+                    let accessing = url.startAccessingSecurityScopedResource()
+                    defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                    do {
+                        // Coordinated read so an iCloud placeholder downloads first.
+                        var data: Data?
+                        var readError: Error?
+                        let coordinator = NSFileCoordinator()
+                        coordinator.coordinate(readingItemAt: url, options: [], error: &readError) { readURL in
+                            data = try? Data(contentsOf: readURL)
+                        }
+                        if let readError { throw readError }
+                        guard let data else { throw CocoaError(.fileReadUnknown) }
+                        try await LXSourceStore.shared.importSourceData(data, suggestedName: name)
+                        toasts.show(String(localized: "已导入 LX 音源：\(name)"))
+                    } catch {
+                        toasts.show(String(localized: "导入 LX 音源失败：\(error.localizedDescription)"))
+                    }
                 }
             }
             .modifier(PlaybackLifecycle())

@@ -663,14 +663,23 @@ final class DownloadManager: ObservableObject {
                 try await persist()
                 return
             }
+            // thirdParty mode never calls the official download endpoint:
+            // go straight to the LX route (same rule as PlayerService).
+            if SettingsManager.shared.playbackSourceMode == .thirdParty {
+                let descriptor = try await downloadViaLX(job: job)
+                await complete(job: job, descriptor: descriptor)
+                return
+            }
             let resource: OfflineAudioResource
             do {
                 resource = try await resolver(job.track, job.quality, job.accountScope)
             } catch let error as OfflineAudioError where error == .unavailable {
-                // The service refuses the song (VIP / gray): the custom source
-                // may still have it. Download through it instead of failing.
-                guard SettingsManager.shared.canResolveUnblockedTracks else { throw error }
-                let descriptor = try await downloadViaCustomSource(job: job)
+                // The service refuses the song (VIP / gray): the LX third-party
+                // source may still have it. Download through it instead of failing.
+                // official mode never falls back to LX.
+                guard SettingsManager.shared.playbackSourceMode != .official,
+                      SettingsManager.shared.canResolveUnblockedTracks else { throw error }
+                let descriptor = try await downloadViaLX(job: job)
                 await complete(job: job, descriptor: descriptor)
                 return
             }
@@ -814,20 +823,20 @@ final class DownloadManager: ObservableObject {
     }
 
     /// VIP / gray songs the service refuses to hand a download URL: fetch the
-    /// file through the Luoxue custom source instead. The link — and the
-    /// headers 网盘 hosts insist on, which AVPlayer/URLSession alone would not
-    /// send — comes from the script; the bytes are fingerprinted (MD5, size,
-    /// decoded duration) and imported through the same door a finished
-    /// background transfer uses, so verification and the library treat it
-    /// exactly like an official download.
-    private func downloadViaCustomSource(job: DownloadJob) async throws -> OfflineAudioDescriptor {
-        guard let resolved = try await LuoxueSourceManager.shared.resolve(track: job.track) else {
-            throw OfflineAudioError.unavailable
-        }
-        var request = URLRequest(url: resolved.url)
-        for (name, value) in resolved.headers ?? [:] {
-            request.setValue(value, forHTTPHeaderField: name)
-        }
+    /// file through the enabled LX third-party source instead. The LX route
+    /// has no per-request headers (unlike the old Luoxue resolver, whose
+    /// scripts returned headers for 网盘 hosts); the bytes are fingerprinted
+    /// (MD5, size, decoded duration) and imported through the same door a
+    /// finished background transfer uses, so verification and the library
+    /// treat it exactly like an official download.
+    /// LX downloads are foreground-only (URLSession.shared.download): no
+    /// resume, no background completion. The official route still uses the
+    /// background transport.
+    private func downloadViaLX(job: DownloadJob) async throws -> OfflineAudioDescriptor {
+        let lxQuality = AudioQuality(neteaseLevel: job.quality)?.lxType ?? "320k"
+        let resolved = try await LXUserAPIService.shared.resolveMusicURL(
+            for: job.track, quality: lxQuality, forceThirdParty: true)
+        let request = URLRequest(url: resolved.url)
         let (fileURL, response) = try await URLSession.shared.download(for: request)
         // importDownload moves the file; removing afterwards is a no-op then.
         defer { try? FileManager.default.removeItem(at: fileURL) }
@@ -879,7 +888,7 @@ final class DownloadManager: ObservableObject {
             identity: OfflineAudioIdentity(
                 accountScope: job.accountScope,
                 trackID: job.track.id,
-                source: "unblock:\(AudioSourceID.luoxue.rawValue)",
+                source: "lx:\(resolved.platform ?? "unknown")",
                 quality: job.quality,
                 format: format,
                 contentMD5: md5),
@@ -1101,7 +1110,7 @@ final class DownloadManager: ObservableObject {
         return await EngineAudioCache.shared.cachedTrackIDs()
         #else
         guard SettingsManager.shared.enableAudioCache else { return [] }
-        return (try? await AudioCache.shared.cachedTrackIDs(allowsUnblock: SettingsManager.shared.canResolveUnblockedTracks)) ?? []
+        return (try? await AudioCache.shared.cachedTrackIDs(allowsThirdParty: SettingsManager.shared.canResolveUnblockedTracks)) ?? []
         #endif
     }
 

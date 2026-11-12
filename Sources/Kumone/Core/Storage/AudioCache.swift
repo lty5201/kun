@@ -3,10 +3,10 @@ import Foundation
 enum AudioCacheSource: Codable, Equatable, Sendable {
     /// The service's own file.
     case origin
-    case unblock(String)
+    case thirdParty(String)
 
-    var requiresUnblockEnabled: Bool {
-        if case .unblock = self {
+    var requiresThirdPartyEnabled: Bool {
+        if case .thirdParty = self {
             return true
         }
         return false
@@ -21,6 +21,8 @@ enum AudioCacheSource: Codable, Equatable, Sendable {
         init?(stringValue: String) { self.stringValue = stringValue }
         init?(intValue: Int) { nil }
         static let origin = Key(Upstream.tag)
+        // Wire tag kept as "unblock" so caches written before the
+        // unblock -> thirdParty rename still decode.
         static let unblock = Key("unblock")
         static let payload = Key("_0")
     }
@@ -31,7 +33,7 @@ enum AudioCacheSource: Codable, Equatable, Sendable {
             self = .origin
         } else if container.contains(.unblock) {
             let nested = try container.nestedContainer(keyedBy: Key.self, forKey: .unblock)
-            self = .unblock(try nested.decode(String.self, forKey: .payload))
+            self = .thirdParty(try nested.decode(String.self, forKey: .payload))
         } else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
                                                     debugDescription: "Unknown audio cache source"))
@@ -43,7 +45,7 @@ enum AudioCacheSource: Codable, Equatable, Sendable {
         switch self {
         case .origin:
             _ = container.nestedContainer(keyedBy: Key.self, forKey: .origin)
-        case .unblock(let source):
+        case .thirdParty(let source):
             var nested = container.nestedContainer(keyedBy: Key.self, forKey: .unblock)
             try nested.encode(source, forKey: .payload)
         }
@@ -136,27 +138,27 @@ actor AudioCache {
     func entry(
         for trackID: Int,
         requestedQuality: String,
-        allowsUnblock: Bool
+        allowsThirdParty: Bool
     ) throws -> AudioCacheEntry? {
         guard let entry = try loadEntry(trackID: trackID) else { return nil }
         guard entry.metadata.requestedQuality == requestedQuality else { return nil }
-        guard allowsUnblock || !entry.metadata.source.requiresUnblockEnabled else { return nil }
+        guard allowsThirdParty || !entry.metadata.source.requiresThirdPartyEnabled else { return nil }
         try touch(entry.fileURL)
         return entry
     }
 
-    func fallbackEntry(for trackID: Int, allowsUnblock: Bool) throws -> AudioCacheEntry? {
+    func fallbackEntry(for trackID: Int, allowsThirdParty: Bool) throws -> AudioCacheEntry? {
         guard let entry = try loadEntry(trackID: trackID) else { return nil }
-        guard allowsUnblock || !entry.metadata.source.requiresUnblockEnabled else { return nil }
+        guard allowsThirdParty || !entry.metadata.source.requiresThirdPartyEnabled else { return nil }
         try touch(entry.fileURL)
         return entry
     }
 
     /// Tracks with a complete cached copy this player may use, for offline
     /// availability; the same rule as `fallbackEntry`.
-    func cachedTrackIDs(allowsUnblock: Bool) throws -> Set<Int> {
+    func cachedTrackIDs(allowsThirdParty: Bool) throws -> Set<Int> {
         Set(try completedEntries()
-            .filter { allowsUnblock || !$0.metadata.source.requiresUnblockEnabled }
+            .filter { allowsThirdParty || !$0.metadata.source.requiresThirdPartyEnabled }
             .map(\.metadata.trackID))
     }
 

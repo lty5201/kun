@@ -5,12 +5,12 @@ struct QueuePrefetchRequest: Equatable {
     let currentTrackID: Int
     let tracks: [Track]
     let quality: String
-    let allowsUnblock: Bool
+    let allowsThirdParty: Bool
     let pendingDownloadTrackIDs: Set<Int>
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.scope == rhs.scope && lhs.currentTrackID == rhs.currentTrackID && lhs.tracks == rhs.tracks
-            && lhs.quality == rhs.quality && lhs.allowsUnblock == rhs.allowsUnblock
+            && lhs.quality == rhs.quality && lhs.allowsThirdParty == rhs.allowsThirdParty
     }
 }
 
@@ -114,7 +114,7 @@ final class QueuePrefetcher {
             visitedTrackIDs.insert(track.id)
             if isDownloaded(track.id) { continue }
             do {
-                if let cached = try await cache.entry(for: track.id, requestedQuality: request.quality, allowsUnblock: request.allowsUnblock) {
+                if let cached = try await cache.entry(for: track.id, requestedQuality: request.quality, allowsThirdParty: request.allowsThirdParty) {
                     guard isCurrent(ticket) else { return }
                     guard cached.metadata.byteCount <= limits.bytes - windowBytes else { windowStopped = true; return }
                     windowBytes += cached.metadata.byteCount
@@ -215,7 +215,10 @@ final class QueuePrefetcher {
         guard let data = try await MusicAPI.songURL(ids: [track.id], level: quality).first,
               data.freeTrialInfo == nil, let string = data.url,
               let url = URL(string: string.replacingOccurrences(of: "http://", with: "https://")) else { return nil }
-        return .init(url: url, servedQuality: data.level, byteCount: Int64(max(data.size, 0)), fileExtension: data.type)
+        // Normalize the server's NetEase level to a kun AudioQuality rawValue:
+        // cached servedQuality is compared against the setting's rawValue.
+        let served = data.level.flatMap { AudioQuality(neteaseLevel: $0)?.rawValue } ?? data.level
+        return .init(url: url, servedQuality: served, byteCount: Int64(max(data.size, 0)), fileExtension: data.type)
     }
 
     /// The artwork a cached song shows offline, like a download.

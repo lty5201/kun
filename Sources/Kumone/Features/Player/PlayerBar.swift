@@ -214,7 +214,9 @@ struct PlayerBar: View {
     private func optionsSection(compact: Bool) -> some View {
         HStack(spacing: 4) {
             if !compact, let level = player.servedQuality,
-               let quality = AudioQuality(rawValue: level) {
+               // servedQuality is a kun rawValue now; fall back to the NetEase
+               // level mapping for cache entries written before the swap.
+               let quality = AudioQuality(rawValue: level) ?? AudioQuality(neteaseLevel: level) {
                 Button {
                     showingQualitySheet = true
                 } label: {
@@ -223,10 +225,10 @@ struct PlayerBar: View {
                 .buttonStyle(.plain)
                 .help(String(localized: "当前歌曲音质"))
                 .padding(.trailing, 2)
-            } else if !compact, player.unblockSource != nil {
-                QualityTag(text: String(localized: "自定义源"))
+            } else if !compact, player.thirdPartySource != nil {
+                QualityTag(text: String(localized: "第三方音源"))
                     .padding(.trailing, 2)
-                    .help("来自 \(player.unblockSource ?? "")")
+                    .help("来自 \(player.thirdPartySource ?? "")")
             }
             PlayerIconButton(
                 icon: "quote.bubble", size: 13,

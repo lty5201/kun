@@ -141,7 +141,7 @@ final class PlayerService: ObservableObject {
     @Published private(set) var isBuffering = false
     @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var servedQuality: String?
-    @Published private(set) var unblockSource: String?
+    @Published private(set) var thirdPartySource: String?
     @Published private(set) var isTrial = false
     let clock = PlaybackClock()
     let lyricsCursor = LyricsCursor()
@@ -252,7 +252,7 @@ final class PlayerService: ObservableObject {
         let key: EngineAudioCache.Key
         let localURL: URL
         let level: String?
-        let unblockSource: String?
+        let thirdPartySource: String?
         let autoMix: Bool
         var analysis: TrackAnalysis?
     }
@@ -503,9 +503,9 @@ final class PlayerService: ObservableObject {
     func applyQualityChangeIfPlaying() {
         guard isPlaying, let track = currentTrack else { return }
         guard currentLocalURL == nil else { return }
-        // A custom-source stream is not quality-switchable (the script picks
+        // A third-party stream is not quality-switchable (the source picks
         // its own format), and re-resolving it would just reload for nothing.
-        if unblockSource != nil, servedQuality == nil { return }
+        if thirdPartySource != nil { return }
         let wanted = SettingsManager.shared.audioQuality.rawValue
         if let served = servedQuality, served == wanted { return }
         startPlaying(track, resumeAt: progress)
@@ -1045,7 +1045,7 @@ final class PlayerService: ObservableObject {
         progress = resumeAt
         duration = track.duration
         servedQuality = nil
-        unblockSource = nil
+        thirdPartySource = nil
         isTrial = false
         lyrics = nil
         currentLyricLRC = nil
@@ -1075,50 +1075,102 @@ final class PlayerService: ObservableObject {
         let url: URL
         let key: EngineAudioCache.Key
         let level: String?
-        let unblockSource: String?
+        let thirdPartySource: String?
         let isTrial: Bool
         let durationMS: Int?
     }
 
     /// The full URL-resolution chain (quality fallback → https upgrade →
-    /// unblock rescue) plus cache-key derivation — shared by playback and
+    /// third-party rescue) plus cache-key derivation — shared by playback and
     /// prefetch so both always derive identical keys. Pure: no toasts, no
     /// state changes.
+    ///
+    /// Route by `playbackSourceMode`: official never touches LX; thirdParty
+    /// never touches the official endpoint; automatic tries the official URL
+    /// first, then LX, then falls back to the official trial clip (today's
+    /// behaviour — see resolveOfficial/resolveThirdParty).
     private func resolveSource(for track: Track) async -> ResolvedSource? {
-        let quality = SettingsManager.shared.audioQuality.rawValue
-        guard !Task.isCancelled else { return nil }
-        var data = try? await MusicAPI.songURL(ids: [track.id], level: quality).first
-        guard !Task.isCancelled else { return nil }
-        if data?.url == nil, quality != AudioQuality.standard.rawValue {
-            data = try? await MusicAPI.songURL(ids: [track.id], level: AudioQuality.standard.rawValue).first
-        }
-        guard !Task.isCancelled else { return nil }
-        var url: URL?
-        var unblock: String?
-        if let urlString = data?.url {
-            url = URL(string: urlString.replacingOccurrences(of: "http://", with: "https://"))
-        }
-        // The service refused — resolve through the Luoxue custom source
-        // (single-shot here, so nothing is excluded).
-        if url == nil || data?.freeTrialInfo != nil, SettingsManager.shared.enableUnblock {
-            let resolution = await UnblockService.resolve(track, excluding: [])
-            if let unblocked = resolution.source {
-                url = unblocked.url
-                unblock = unblocked.displayName
-                data = nil
+        let mode = SettingsManager.shared.playbackSourceMode
+        let wanted = SettingsManager.shared.audioQuality
+        let neteaseLevel = wanted.neteaseLevel
+        let lxQuality = wanted.lxType
+        switch mode {
+        case .official:
+            let official = await resolveOfficial(track, level: neteaseLevel)
+            guard let url = official.url else { return nil }
+            return officialResolvedSource(url: url, data: official.data, level: neteaseLevel)
+        case .thirdParty:
+            return await resolveThirdParty(track, quality: lxQuality)
+        case .automatic:
+            let official = await resolveOfficial(track, level: neteaseLevel)
+            if let url = official.url, official.data?.freeTrialInfo == nil {
+                return officialResolvedSource(url: url, data: official.data, level: neteaseLevel)
             }
+            if let lx = await resolveThirdParty(track, quality: lxQuality) { return lx }
+            guard !Task.isCancelled, let url = official.url else { return nil }
+            return officialResolvedSource(url: url, data: official.data, level: neteaseLevel)
         }
-        guard !Task.isCancelled, let url else { return nil }
+    }
+
+    /// Official route only: songURL at the requested NetEase level, with the
+    /// internal standard-level fallback. Never calls LX. Returns the raw data
+    /// plus URL so the caller can tell a full URL from a trial clip.
+    private func resolveOfficial(_ track: Track, level: String) async -> (data: SongURLData?, url: URL?) {
+        var data = try? await MusicAPI.songURL(ids: [track.id], level: level).first
+        guard !Task.isCancelled else { return (nil, nil) }
+        if data?.url == nil, level != AudioQuality.standard.neteaseLevel {
+            data = try? await MusicAPI.songURL(ids: [track.id], level: AudioQuality.standard.neteaseLevel).first
+        }
+        guard !Task.isCancelled else { return (nil, nil) }
+        guard let urlString = data?.url else { return (data, nil) }
+        return (data, URL(string: urlString.replacingOccurrences(of: "http://", with: "https://")))
+    }
+
+    /// Builds the ResolvedSource for an official URL. `level` (servedQuality)
+    /// is normalized to a kun AudioQuality rawValue: the server returns a
+    /// NetEase level ("jymaster"), but the setting's rawValue is now "master",
+    /// and applyQualityChangeIfPlaying compares the two.
+    private func officialResolvedSource(url: URL, data: SongURLData?, level: String) -> ResolvedSource {
         let ext = url.pathExtension.isEmpty ? "mp3" : url.pathExtension.lowercased()
         return ResolvedSource(
             url: url,
-            key: EngineAudioCache.Key(trackID: track.id, level: data?.level ?? quality,
-                                source: unblock.map { "unblock:\($0)" } ?? Upstream.tag,
-                                fileExtension: ext),
-            level: data?.level,
-            unblockSource: unblock,
+            key: EngineAudioCache.Key(trackID: track.id, level: data?.level ?? level,
+                                source: Upstream.tag, fileExtension: ext),
+            level: data?.level.flatMap { AudioQuality(neteaseLevel: $0)?.rawValue } ?? data?.level,
+            thirdPartySource: nil,
             isTrial: data?.freeTrialInfo != nil,
             durationMS: data?.time)
+    }
+
+    /// LX third-party route only, with `forceThirdParty: true` so the LX
+    /// service never falls back to its internal official path. The LX engine
+    /// is iOS-only, so on macOS this always returns nil (no LX route).
+    private func resolveThirdParty(_ track: Track, quality: String) async -> ResolvedSource? {
+#if os(iOS)
+        guard !Task.isCancelled else { return nil }
+        do {
+            let resolved = try await LXUserAPIService.shared.resolveMusicURL(
+                for: track, quality: quality, forceThirdParty: true)
+            guard ["http", "https"].contains(resolved.url.scheme?.lowercased() ?? "") else { return nil }
+            guard !Task.isCancelled else { return nil }
+            // ResolvedURL has no headers, md5/size/duration; the LX side
+            // refuses trial-length results itself.
+            let level = normalizedLevel(resolved.quality) ?? SettingsManager.shared.audioQuality.rawValue
+            let ext = resolved.url.pathExtension.isEmpty ? "mp3" : resolved.url.pathExtension.lowercased()
+            return ResolvedSource(
+                url: resolved.url,
+                key: EngineAudioCache.Key(trackID: track.id, level: level,
+                                          source: "lx:\(resolved.platform ?? "unknown")", fileExtension: ext),
+                level: level,
+                thirdPartySource: resolved.platform ?? "LX",
+                isTrial: false,
+                durationMS: nil)
+        } catch {
+            return nil
+        }
+#else
+        return nil
+#endif
     }
 
     private func resolveAndLoad(_ track: Track, generation: Int,
@@ -1168,12 +1220,12 @@ final class PlayerService: ObservableObject {
         PlaybackJournal.note(
             "now playing id=\(track.id) level=\(resolved.level ?? "?") "
             + "wanted=\(SettingsManager.shared.audioQuality.rawValue) "
-            + (resolved.unblockSource.map { "unblock=\($0) " } ?? "")
+            + (resolved.thirdPartySource.map { "lx=\($0) " } ?? "")
             + (resolved.isTrial ? "trial " : ""))
         scheduleAudioUnitReadback()
-        unblockSource = resolved.unblockSource
-        if let source = resolved.unblockSource {
-            ToastCenter.shared.show(String(localized: "已使用自定义源：\(source)"))
+        thirdPartySource = resolved.thirdPartySource
+        if let source = resolved.thirdPartySource {
+            ToastCenter.shared.show(String(localized: "已使用第三方音源：\(source)"))
         }
         if resolved.isTrial {
             isTrial = true
@@ -1538,7 +1590,7 @@ final class PlayerService: ObservableObject {
             AutoMixDebugModel.shared.setNextAnalysis(analysis, localURL: local)
             self.prefetchedNext = PrefetchedNext(
                 track: target, key: resolved.key, localURL: local,
-                level: resolved.level, unblockSource: resolved.unblockSource,
+                level: resolved.level, thirdPartySource: resolved.thirdPartySource,
                 autoMix: autoMix, analysis: analysis)
             self.armTransitionIfReady()
             await lyrics
@@ -2694,7 +2746,7 @@ final class PlayerService: ObservableObject {
             "now playing id=\(next.id) level=\(prefetchedNext?.level ?? "?") "
             + "wanted=\(SettingsManager.shared.audioQuality.rawValue) via=handover")
         scheduleAudioUnitReadback()
-        unblockSource = prefetchedNext?.unblockSource
+        thirdPartySource = prefetchedNext?.thirdPartySource
         isTrial = false
         isPlaying = true
         progress = engine.position(of: deck)
@@ -3085,7 +3137,7 @@ final class PlayerService: ObservableObject {
         var lease = lease
         if lease == nil, let scope {
             lease = try? await OfflineStore.shared.acquire(accountScope: scope, trackID: track.id,
-                preferredQuality: SettingsManager.shared.audioQuality.rawValue,
+                preferredQuality: SettingsManager.shared.audioQuality.neteaseLevel,
                 allowLowerQuality: anyQuality || !networkState.connected)
         }
         guard let lease else { return nil }
@@ -3183,7 +3235,7 @@ final class PlayerService: ObservableObject {
         offlineScan = Task { [weak self] in
             guard let self, !Task.isCancelled, self.offlineScanID == requestID else { return }
             let selected = try? await OfflineQueueSelector.firstAvailable(candidates, scope: scope,
-                quality: SettingsManager.shared.audioQuality.rawValue, store: .shared,
+                quality: SettingsManager.shared.audioQuality.neteaseLevel, store: .shared,
                 isCached: { await EngineAudioCache.shared.cachedFileURL(trackID: $0) != nil })
             guard !Task.isCancelled, self.offlineScanID == requestID, self.resolveGeneration == generation,
                   self.offlineAccountScope == scope else {

@@ -14,7 +14,7 @@ actor EngineAudioCache {
     struct Key: Hashable, Sendable {
         let trackID: Int
         let level: String          // served quality level, e.g. "exhigh"
-        let source: String         // `Upstream.tag` or "unblock:<source>"
+        let source: String         // `Upstream.tag` or "lx:<platform>"
         let fileExtension: String  // "mp3"/"flac"/"m4a", inferred by the caller
     }
 
