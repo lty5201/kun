@@ -55,9 +55,32 @@ struct Track: Codable, Hashable, Identifiable {
     /// Some endpoints (cloudsearch, FM) embed the privilege in the track itself.
     let embeddedPrivilege: TrackPrivilege?
 
+    /// LX Music keeps source-specific identifiers next to the unified song
+    /// fields.  Keeping them here means a result can be played by the same
+    /// queue as a NetEase result without losing its original source key.
+    var source: String?
+    var sourceMetadata: [String: String]
+
     var artistNames: String { artists.map(\.name).joined(separator: " / ") }
     var duration: TimeInterval { TimeInterval(durationMS) / 1000 }
     var subtitle: String? { transNames.first ?? alias.first }
+
+    /// NetEase flags VIP songs with `fee == 1`; other catalogues carry the provider's own flag in
+    /// `sourceMetadata["vip"]` (set where the provider exposes one).
+    var isVIP: Bool { fee == 1 || sourceMetadata["vip"] == "1" }
+
+    /// Queue identity must include the catalogue platform. NetEase, QQ and
+    /// Kuwo commonly reuse the same numeric IDs, so comparing `id` alone can
+    /// make a rapid tap jump to (or keep) the wrong song.
+    var playbackKey: String {
+        let sourceKey = source?.lowercased() ?? sourceMetadata["source"]?.lowercased() ?? "wy"
+        let providerID = sourceMetadata["songmid"]
+            ?? sourceMetadata["songId"]
+            ?? sourceMetadata["hash"]
+            ?? sourceMetadata["copyrightId"]
+            ?? String(id)
+        return "\(sourceKey):\(providerID):\(name):\(artistNames)"
+    }
 
     private enum CodingKeys: String, CodingKey {
         case id, name
@@ -66,6 +89,7 @@ struct Track: Codable, Hashable, Identifiable {
         case dt, duration
         case alia, alias
         case tns, fee, mv, no, cd, noCopyrightRcmd, pc, privilege
+        case source, sourceMetadata
     }
 
     init(from decoder: Decoder) throws {
@@ -90,6 +114,72 @@ struct Track: Codable, Hashable, Identifiable {
             && (try? c.decodeNil(forKey: .noCopyrightRcmd)) == false
         isCloud = c.contains(.pc) && (try? c.decodeNil(forKey: .pc)) == false
         embeddedPrivilege = try? c.decode(TrackPrivilege.self, forKey: .privilege)
+        source = try? c.decode(String.self, forKey: .source)
+        sourceMetadata = (try? c.decode([String: String].self, forKey: .sourceMetadata)) ?? [:]
+    }
+
+    init(id: Int, name: String, artists: [ArtistRef], album: AlbumRef,
+         durationMS: Int, source: String? = nil,
+         sourceMetadata: [String: String] = [:]) {
+        self.id = id
+        self.name = name
+        self.artists = artists
+        self.album = album
+        self.durationMS = durationMS
+        self.alias = []
+        self.transNames = []
+        self.fee = 0
+        self.mvID = 0
+        self.trackNo = 0
+        self.disc = nil
+        self.noCopyright = false
+        self.isCloud = false
+        self.embeddedPrivilege = nil
+        self.source = source
+        self.sourceMetadata = sourceMetadata
+    }
+
+    func withSource(_ source: String, metadata: [String: String] = [:]) -> Track {
+        var copy = self
+        copy.source = source
+        copy.sourceMetadata = metadata.isEmpty ? sourceMetadata : metadata
+        return copy
+    }
+
+    /// Native NetEase catalogue endpoints return tracks without a source
+    /// marker. Mark those results as WY before they enter the queue so iOS
+    /// always asks the selected LX User API for the actual audio URL.
+    func normalizedForLXPlayback() -> Track {
+        let rawSource = source?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? sourceMetadata["source"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let rawSource, !rawSource.isEmpty else {
+            var copy = self
+            copy.source = "wy"
+            var metadata = sourceMetadata
+            metadata["songmid"] = metadata["songmid"] ?? String(id)
+            copy.sourceMetadata = metadata
+            return copy
+        }
+        let normalized: String
+        switch rawSource.lowercased() {
+        case "163", "netease", "neteasecloudmusic", "netease-cloud-music", "cloudmusic": normalized = "wy"
+        case "kuwo": normalized = "kw"
+        case "kugou": normalized = "kg"
+        case "qq", "qqmusic", "qq-music": normalized = "tx"
+        case "migu": normalized = "mg"
+        case "sd", "soda", "sodamusic", "soda-music", "qishui", "qishui-music": normalized = "sd"
+        default: normalized = rawSource.lowercased()
+        }
+        var copy = self
+        copy.source = normalized
+        var metadata = sourceMetadata
+        switch normalized {
+        case "wy", "kw", "tx", "mg", "sd":
+            metadata["songmid"] = metadata["songmid"] ?? String(id)
+        default: break
+        }
+        copy.sourceMetadata = metadata
+        return copy
     }
 
     func encode(to encoder: Encoder) throws {
@@ -108,6 +198,10 @@ struct Track: Codable, Hashable, Identifiable {
         if isCloud { try c.encode([String: String](), forKey: .pc) }
         if noCopyright { try c.encode([String: String](), forKey: .noCopyrightRcmd) }
         try c.encodeIfPresent(embeddedPrivilege, forKey: .privilege)
+        try c.encodeIfPresent(source, forKey: .source)
+        if !sourceMetadata.isEmpty {
+            try c.encode(sourceMetadata, forKey: .sourceMetadata)
+        }
     }
 }
 

@@ -39,7 +39,7 @@ struct SettingsSheet: View {
                     case .lyrics:
                         LyricsSettingsPage()
                     case .luoxueSources:
-                        LuoxueSourcesPage()
+                        LXSourceManagerView()
                     case .soundEffects:
                         SoundEffectsPage()
                     }
@@ -52,26 +52,34 @@ struct SettingsSheet: View {
 struct SettingsView: View {
     @EnvironmentObject private var settings: SettingsManager
     @EnvironmentObject private var account: AccountStore
-    @ObservedObject private var luoxue = LuoxueSourceManager.shared
+    #if os(iOS)
+    @ObservedObject private var lxStore = LXSourceStore.shared
+    #endif
     @Environment(\.openDestination) private var openDestination
     #if os(macOS)
     @AppStorage(SettingsManager.Keys.menuBarPlayer) private var showMenuBarPlayer = false
     @State private var navigationPath: [SettingsPage] = []
     #endif
 
-    /// One-line summary of the installed Luoxue sources, shown on the
+    #if os(iOS)
+    /// One-line summary of the installed LX sources, shown on the
     /// 自定义源管理 row.
     private var luoxueSummaryText: String {
-        let entries = luoxue.entries
+        let entries = lxStore.sources
         if entries.isEmpty { return String(localized: "未导入") }
-        let enabled = entries.filter(\.enabled).count
+        let enabled = entries.filter { lxStore.isEnabled($0.id) }.count
         return String(localized: "\(entries.count) 个源，\(enabled) 个启用")
     }
+    #else
+    private var luoxueSummaryText: String { String(localized: "未导入") }
+    #endif
 
     fileprivate enum SettingsPage: Hashable {
         case storage
         case lyrics
+        #if os(iOS)
         case luoxueSources
+        #endif
         #if os(iOS)
         case soundEffects
         #endif
@@ -107,17 +115,28 @@ struct SettingsView: View {
     private var settingsForm: some View {
         Form {
             Section("播放") {
-                Picker("播放音质", selection: $settings.audioQuality) {
-                    ForEach(AudioQuality.allCases.filter(\.showsInSheet)) { quality in
-                        Text(quality.displayName).tag(quality)
+                Picker("播放来源", selection: $settings.playbackSourceMode) {
+                    ForEach(PlaybackSourceMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
                     }
                 }
-                Picker("下载音质", selection: $settings.downloadQuality) {
-                    ForEach(AudioQuality.allCases.filter(\.showsInSheet)) { quality in
-                        Text(quality.displayName).tag(quality)
+#if os(iOS)
+                .pickerStyle(.segmented)
+#endif
+                Text(settings.playbackSourceMode.explanation)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Picker("默认播放音质", selection: Binding(
+                    get: { settings.audioQuality },
+                    set: { settings.audioQuality = $0; QualitySupport.rememberChoice($0) }
+                )) {
+                    ForEach(AudioQuality.allCases) { quality in
+                        Text("\(quality.displayName) · \(quality.sourceDisplayName)")
+                            .tag(quality)
                     }
                 }
-                Text("无损、Hi-Res 与高清臻音需黑胶 VIP，全景声与母带需 SVIP，未开通时自动回落到可用音质；下载音质独立于播放音质，仅对新发起的下载生效；播放页与底部控制栏的音质标签可点开切换")
+                Text("自动模式先尝试已登录账号的官方音源；账号不可用或只返回试听片段时，再按顺序回退到已启用的 LX 第三方音源。最终显示以接口实际返回的音质为准，不会把请求档位当成真实音质；下载使用播放音质，不再单独设置。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 #if os(iOS)
@@ -142,7 +161,8 @@ struct SettingsView: View {
             AutoMixSettingsSection()
             #endif
 
-            // The custom-source section is always visible — the Luoxue script
+            #if os(iOS)
+            // The custom-source section is always visible — the LX script
             // is the only music source left in the app, so hiding its entry
             // behind another toggle made the app look like it had no source
             // management at all.
@@ -162,6 +182,7 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            #endif
 
             // Flutify lyrics settings entry — always visible, never hidden.
             Section("歌词") {
@@ -328,8 +349,6 @@ struct SettingsView: View {
                     }
                 case .lyrics:
                     LyricsSettingsPage()
-                case .luoxueSources:
-                    LuoxueSourcesPage()
                 case .shortcuts:
                     ShortcutSettingsView()
                 }
@@ -341,7 +360,6 @@ struct SettingsView: View {
                     switch page {
                     case .storage: Text("存储空间").font(.headline)
                     case .lyrics: Text("歌词").font(.headline)
-                    case .luoxueSources: Text("自定义源管理").font(.headline)
                     case .shortcuts: Text("快捷键").font(.headline)
                     }
                 }

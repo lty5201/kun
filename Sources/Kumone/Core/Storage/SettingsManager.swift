@@ -1,113 +1,301 @@
 import SwiftUI
 
-enum AudioQuality: String, CaseIterable, Identifiable {
-    case standard
-    case higher
-    case exhigh
-    case lossless
+// Ported from Moumusic (jiajia2222/Moumusic, main f3e511a0):
+// platforms/ios/Sources/Kumone/Core/Storage/SettingsManager.swift
+// (AudioQuality + PlaybackSourceMode, copied verbatim).
+// License note: the Moumusic source file carries no per-file license header;
+// the Moumusic repository itself is licensed under LGPL-3.0 (its LICENSE file).
+
+enum AudioQuality: String, CaseIterable, Identifiable, Sendable {
+    // allCases is used by the player and download pickers. Keep the order
+    // highest-to-lowest so the best declared source tier appears first.
+    case master
+    case atmos
+    case dolby
+    case surround
     case hires
-    // NetEase's newer tiers; the API degrades to whatever the account can
-    // actually stream, same as the official app's sheet.
-    case jyeffect
-    case vivid
-    case sky
-    case jymaster
+    case lossless
+    case exhigh
+    case higher
+    case standard
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .standard: return String(localized: "标准")
-        case .higher: return String(localized: "较高")
-        case .exhigh: return String(localized: "极高 HQ")
-        case .lossless: return String(localized: "无损 SQ")
-        case .hires: return String(localized: "高解析度无损")
-        case .jyeffect: return String(localized: "高清臻音")
-        case .vivid: return String(localized: "臻音全景声")
-        case .sky: return String(localized: "沉浸环绕声")
-        case .jymaster: return String(localized: "超清母带")
-        }
-    }
-
-    /// The English tier name the official sheet prints beside the Chinese one.
-    var englishName: String? {
-        switch self {
-        case .sky: return "Surround Audio"
-        case .jymaster: return "Master"
-        case .vivid: return "Audio Vivid"
-        case .jyeffect: return "Spatial Audio"
+        case .master: return "超清母带"
+        case .atmos: return "高清环绕声"
+        case .dolby: return "杜比全景声"
+        case .surround: return "沉浸环绕声"
         case .hires: return "Hi-Res"
-        default: return nil
-        }
-    }
-
-    /// The small tag printed next to a top card's title (沉浸环绕声 carries
-    /// 听感升级 in the official sheet).
-    var cardTag: String? {
-        switch self {
-        case .sky: return String(localized: "听感升级")
-        default: return nil
+        case .lossless: return "无损"
+        case .exhigh: return "极高"
+        case .higher: return "较高"
+        case .standard: return "标准"
         }
     }
 
     var badge: String {
         switch self {
-        case .standard: return String(localized: "标")
-        case .higher: return String(localized: "较高")
-        case .exhigh: return "HQ"
-        case .lossless: return "SQ"
-        case .hires: return "Hi-Res"
-        case .jyeffect: return String(localized: "臻音")
-        case .vivid: return String(localized: "全景声")
-        case .sky: return String(localized: "环绕声")
-        case .jymaster: return String(localized: "母带")
+        case .master: return "超清母带"
+        case .atmos: return "高清环绕声"
+        case .dolby: return "杜比全景声"
+        case .surround: return "沉浸环绕声"
+        case .hires: return "高解析"
+        case .lossless: return "无损"
+        case .exhigh: return "极高"
+        case .higher: return "较高"
+        case .standard: return "标准"
         }
     }
 
-    /// The sheet's secondary line, matching the official app's wording.
-    var detailText: String {
+    var lxType: String {
         switch self {
-        case .standard: return String(localized: "128kbps")
-        case .higher: return String(localized: "192kbps")
-        case .exhigh: return String(localized: "近 CD 音质的细节体验，最高320kbps")
-        case .lossless: return String(localized: "高保真无损音质，最高48kHz/16bit")
-        case .hires: return String(localized: "更饱满清晰的高解析度音质，最高192kHz/24bit")
-        case .jyeffect: return String(localized: "高频细节还原与清晰沉浸感，96kHz/24bit")
-        case .vivid: return String(localized: "沉浸三维空间音频，最高7.1.4声道")
-        case .sky: return String(localized: "环绕音感 最高5.1声道")
-        case .jymaster: return String(localized: "极致细节 192kHz/24bit")
+        case .master: return "jymaster"
+        case .atmos: return "atmos"
+        case .dolby: return "dolby"
+        case .surround: return "surround"
+        case .hires: return "flac24bit"
+        case .lossless: return "flac"
+        case .exhigh, .higher: return "320k"
+        case .standard: return "128k"
         }
     }
 
-    /// The badge shown beside the tier name: SVIP / VIP tiers follow the
-    /// official sheet (臻音全景声、沉浸环绕声、超清母带 are SVIP; 高清臻音、
-    /// Hi-Res、无损 are VIP; the free tiers carry none).
-    var tierBadge: String? {
+    /// Technical label shown in the picker. It never claims a tier that the
+    /// active source did not advertise.
+    var sourceDisplayName: String {
         switch self {
-        case .jymaster, .sky, .vivid: return "SVIP"
-        case .jyeffect, .hires, .lossless: return "VIP"
-        case .standard, .higher, .exhigh: return nil
+        case .master: return "超清母带 / Master"
+        case .atmos: return "高清环绕声 / Spatial"
+        case .dolby: return "杜比全景声 / Dolby Atmos"
+        case .surround: return "沉浸环绕声 / Surround"
+        case .hires: return "Hi-Res / FLAC 24-bit"
+        case .lossless: return "无损 FLAC"
+        case .exhigh, .higher: return "320 kbps"
+        case .standard: return "128 kbps"
         }
     }
 
-    /// Order in the quality sheet, best first — matches the official app.
-    var sheetOrder: Int {
+    /// The tier's name on the song's own platform (QQ 臻品 / 酷狗 蝰蛇 / 咪咕 PQ·HQ·SQ·ZQ ...); NetEase and
+    /// anything else keep the app's generic names.
+    func platformLabel(_ source: String?) -> String {
+        switch (source ?? "").lowercased() {
+        case "tx", "qq", "qqmusic", "qq-music":
+            switch self {
+            case .master: return "臻品母带"
+            case .atmos: return "臻品全景声"
+            case .dolby: return "杜比全景声"
+            case .surround: return "臻品全景声 5.1"
+            case .hires: return "Hi-Res 臻品音质"
+            case .lossless: return "SQ 无损品质"
+            case .exhigh, .higher: return "HQ 高品质"
+            case .standard: return "标准音质"
+            }
+        case "kg", "kugou":
+            switch self {
+            case .master: return "蝰蛇超清母带"
+            case .atmos: return "蝰蛇全景声"
+            case .dolby, .surround: return "蝰蛇超清音质"
+            case .hires: return "Hi-Res 超清音质"
+            case .lossless: return "无损音质"
+            case .exhigh, .higher: return "高品质"
+            case .standard: return "标准音质"
+            }
+        case "mg", "migu":
+            switch self {
+            case .master: return "ZQ 臻品母带"
+            case .atmos, .dolby, .surround: return "3D 臻品全景声"
+            case .hires: return "ZQ Hi-Res"
+            case .lossless: return "SQ 无损"
+            case .exhigh, .higher: return "HQ 高品"
+            case .standard: return "PQ 标准"
+            }
+        case "kw", "kuwo":
+            switch self {
+            case .master, .atmos, .dolby, .surround, .hires: return "Hi-Res 无损"
+            case .lossless: return "无损音质"
+            case .exhigh, .higher: return "超品音质"
+            case .standard: return "标准音质"
+            }
+        default:
+            return sourceDisplayName
+        }
+    }
+
+    init?(lxType: String) {        switch lxType.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "master", "jymaster", "master_quality", "master-quality": self = .master
+        case "atmos", "immersive": self = .atmos
+        case "dolby", "dolby-atmos", "dolbyatmos": self = .dolby
+        case "surround", "spatial", "spatial-audio": self = .surround
+        case "128", "128k", "m4a", "mp3": self = .standard
+        case "320", "320k": self = .exhigh
+        case "flac", "lossless", "ape": self = .lossless
+        case "flac24bit", "flac24", "hires", "highres": self = .hires
+        default: return nil
+        }
+    }
+
+    var isPlatformSpecific: Bool {
         switch self {
-        case .sky: return 0
-        case .jymaster: return 1
-        case .vivid: return 2
-        case .jyeffect: return 3
-        case .hires: return 4
-        case .lossless: return 5
-        case .exhigh: return 6
-        case .higher: return 7
-        case .standard: return 8
+        case .master, .atmos, .dolby, .surround: return true
+        default: return false
         }
     }
 
-    /// 较高 exists in the API but the official sheet leaves it out.
-    var showsInSheet: Bool { self != .higher }
+    /// These tiers are not treated as available NetEase account privileges
+    /// for a non-VIP account. A third-party LX source may still advertise one
+    /// of them, but the player must label that route explicitly.
+    var requiresNeteaseVIP: Bool {
+        switch self {
+        case .master, .atmos, .dolby, .surround, .hires: return true
+        default: return false
+        }
+    }
+
+    /// NetEase's official account endpoint uses different level names from
+    /// LX User API. Keep this mapping in one place so the player can request
+    /// an account URL without changing the third-party source protocol.
+    var neteaseLevel: String {
+        switch self {
+        case .master: return "jymaster"
+        case .atmos: return "jyeffect"
+        case .dolby: return "dolby"
+        case .surround: return "sky"
+        case .hires: return "hires"
+        case .lossless: return "lossless"
+        case .exhigh, .higher: return "exhigh"
+        case .standard: return "standard"
+        }
+    }
+
+    init?(neteaseLevel: String) {
+        switch neteaseLevel.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "jymaster", "master": self = .master
+        case "jyeffect", "atmos", "immersive": self = .atmos
+        case "dolby", "dolby_atmos": self = .dolby
+        case "sky", "surround", "spatial": self = .surround
+        case "hires", "highres": self = .hires
+        case "lossless", "flac": self = .lossless
+        case "exhigh", "higher": self = .exhigh
+        case "standard", "128k": self = .standard
+        default: return nil
+        }
+    }
+
+    /// Converts a provider response into a display label. This is deliberately
+    /// separate from `displayName`: that property describes a requested tier,
+    /// while this helper describes what the provider actually reported.
+    static func resolvedDisplayName(_ rawValue: String?) -> String {
+        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty else {
+            return "未知"
+        }
+        if rawValue.lowercased() == "unknown" {
+            return "未知（音源未返回音质字段）"
+        }
+        if let quality = AudioQuality(lxType: rawValue) {
+            return quality.sourceDisplayName
+        }
+        if let bitrate = Int(rawValue.lowercased()
+            .replacingOccurrences(of: "kbps", with: "")
+            .replacingOccurrences(of: "k", with: "")) {
+            return "\(bitrate) kbps"
+        }
+        return rawValue.uppercased()
+    }
+
+    static func isUnknownResolvedQuality(_ rawValue: String?) -> Bool {
+        rawValue?.lowercased() == "unknown" || rawValue == nil
+    }
+
+    /// Returns a comparable rank for a provider-reported result.  This is
+    /// intentionally separate from the request enum because providers may
+    /// return a concrete bitrate such as 192k that is not a selectable tier.
+    static func resolvedRank(_ rawValue: String?) -> Int? {
+        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty,
+              rawValue.lowercased() != "unknown" else {
+            return nil
+        }
+        if let quality = AudioQuality(lxType: rawValue) {
+            switch quality {
+            case .master: return 900
+            case .atmos: return 850
+            case .dolby: return 840
+            case .surround: return 830
+            case .hires: return 800
+            case .lossless: return 700
+            case .exhigh, .higher: return 320
+            case .standard: return 128
+            }
+        }
+        let numeric = rawValue.lowercased()
+            .replacingOccurrences(of: "kbps", with: "")
+            .replacingOccurrences(of: "k", with: "")
+        return Int(numeric)
+    }
 }
+
+extension AudioQuality {
+    /// One-time migration for values stored by kun's old enum.
+    /// Old NetEase-level raw values "jyeffect" / "sky" / "vivid" have no case
+    /// in the new enum; they fall back to .exhigh (the safe non-VIP tier)
+    /// instead of being promoted to a VIP tier.
+    /// Do NOT use init?(neteaseLevel:) for this migration: it would map
+    /// "jyeffect" -> .atmos and "sky" -> .surround.
+    init?(migratingLegacyRawValue rawValue: String) {
+        if let quality = AudioQuality(rawValue: rawValue) {
+            self = quality
+            return
+        }
+        switch rawValue.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "jymaster", "master": self = .master
+        case "jyeffect", "sky", "vivid": self = .exhigh
+        default: return nil
+        }
+    }
+}
+
+/// Maps an LX quality token back to a kun AudioQuality rawValue for cache keys
+/// and servedQuality. Unknown tokens (including "unknown", which means the
+/// source gave no tier field) map to nil — never store "unknown" in a cache
+/// key or in the UI.
+func normalizedLevel(_ lxQuality: String) -> String? {
+    AudioQuality(lxType: lxQuality)?.rawValue
+}
+
+/// Selects which authorized playback route is attempted first on iOS.
+/// `automatic` is the safe default: prefer a logged-in account source for the
+/// matching catalogue, then fall back to enabled LX sources when it cannot
+/// provide a full-length URL.
+enum PlaybackSourceMode: String, CaseIterable, Identifiable {
+    case automatic
+    case official
+    case thirdParty
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .automatic: return String(localized: "自动（账号优先，三方备用）")
+        case .official: return String(localized: "账号音源（官方）")
+        case .thirdParty: return String(localized: "第三方音源")
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .automatic:
+            return String(localized: "优先使用已登录账号的完整音频；账号不可用时按已启用的 LX 音源顺序回退")
+        case .official:
+            return String(localized: "网易云、QQ 音乐、酷狗按对应平台使用已登录账号的官方播放；未登录或不可用时不会偷偷换源")
+        case .thirdParty:
+            return String(localized: "只使用已导入并启用的 LX 音源")
+        }
+    }
+}
+
 
 enum AppAppearance: String, CaseIterable, Identifiable {
     case auto, light, dark
@@ -197,7 +385,7 @@ final class SettingsManager: ObservableObject {
     /// the key the same way.
     enum Keys {
         static let quality = "settings.audioQuality"
-        static let downloadQuality = "settings.downloadQuality"
+        static let playbackSourceMode = "settings.playbackSourceMode"
         static let appearance = "settings.appearance"
         static let nowPlayingMode = "settings.nowPlayingMode"
         static let landscapeNowPlayingStyle = "settings.landscapeNowPlayingStyle"
@@ -314,13 +502,10 @@ final class SettingsManager: ObservableObject {
         didSet { UserDefaults.standard.set(audioQuality.rawValue, forKey: Keys.quality) }
     }
 
-    /// The quality new downloads are requested at — independent of the
-    /// streaming preference, so saving data on playback doesn't mean saving
-    /// it on downloads (or vice versa). Unset on upgrade: inherits the
-    /// streaming quality, which is what downloads used before.
-    @Published var downloadQuality: AudioQuality {
-        didSet { UserDefaults.standard.set(downloadQuality.rawValue, forKey: Keys.downloadQuality) }
+    @Published var playbackSourceMode: PlaybackSourceMode {
+        didSet { UserDefaults.standard.set(playbackSourceMode.rawValue, forKey: Keys.playbackSourceMode) }
     }
+
 
     static let audioCacheSizeRangeMB = 100...10_000
     static let audioCacheSizeStepMB = 100
@@ -448,10 +633,14 @@ final class SettingsManager: ObservableObject {
     }
 
     /// Whether gray tracks can be resolved: unblock enabled and at least one
-    /// Luoxue custom source loaded.
+    /// LX third-party source selected and loaded.
     var canResolveUnblockedTracks: Bool {
-        LuoxueSourceManager.shared.ensureLoadedFromSettings()
-        return enableUnblock && LuoxueSourceManager.shared.isReady
+#if os(iOS)
+        LXUserAPIService.shared.ensureSelectedSourceLoaded()
+        return enableUnblock && LXSourceStore.shared.selectedSource != nil
+#else
+        return false
+#endif
     }
 
     /// Floating desktop lyrics window (LyricsX-style).
@@ -619,9 +808,11 @@ final class SettingsManager: ObservableObject {
 
     private init() {
         let defaults = UserDefaults.standard
-        let storedQuality = defaults.string(forKey: Keys.quality).flatMap(AudioQuality.init) ?? .exhigh
+        let storedQuality = defaults.string(forKey: Keys.quality)
+            .flatMap(AudioQuality.init(migratingLegacyRawValue:)) ?? .exhigh
         audioQuality = storedQuality
-        downloadQuality = defaults.string(forKey: Keys.downloadQuality).flatMap(AudioQuality.init) ?? storedQuality
+        playbackSourceMode = defaults.string(forKey: Keys.playbackSourceMode)
+            .flatMap(PlaybackSourceMode.init(rawValue:)) ?? .automatic
         enableAudioCache = defaults.object(forKey: Keys.enableAudioCache) as? Bool ?? true
         // A size somebody chose stays chosen; the untouched default becomes automatic.
         audioCacheAutomatic = defaults.object(forKey: Keys.audioCacheAutomatic) as? Bool
