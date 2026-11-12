@@ -53,6 +53,20 @@ targets:
       - LyricsLiveActivity
     info:
       path: LyricsLiveActivity/Info.plist
+      # NOTE: `xcodegen generate` OVERWRITES the file at info.path with its
+      # generated defaults (FileWriter.writePlists + InfoPlistGenerator) on
+      # every build, so hand-editing LyricsLiveActivity/Info.plist in the repo
+      # does NOT survive to the build — that is why NSExtension kept vanishing
+      # from the built .appex (#38, #39). The ONLY keys that survive are the
+      # generated defaults plus these `properties`, which XcodeGen merges on
+      # top when it rewrites the file. So the extension point declaration and
+      # the display name must live here, not only in the plist file.
+      properties:
+        CFBundleDisplayName: 歌词灵动岛
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
     configFiles:
       Debug: Config/Extension.xcconfig
       Release: Config/Extension.xcconfig
