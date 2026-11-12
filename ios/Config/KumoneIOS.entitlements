@@ -4,6 +4,16 @@
 <dict>
 	<!-- Base entitlements - add your app's entitlements here -->
 	<!-- AI agents can safely modify this file to add capabilities -->
+
+	<!-- App Group shared with the LyricsLiveActivity extension: the app
+	     writes the current track's cover thumbnail here so the island pill
+	     can show it. The group must exist for the App ID in the Apple
+	     Developer portal, otherwise the shared container is unavailable and
+	     the island falls back to a music-note icon. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.sb.moe.kumone-ios</string>
+	</array>
 	
 	<!-- Example entitlements (commented out by default):
 	

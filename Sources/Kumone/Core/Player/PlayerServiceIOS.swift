@@ -472,6 +472,20 @@ final class PlayerService: ObservableObject {
         #if os(iOS)
         NowPlayingManager.shared.updateCurrentLyric(snapshotLyric)
         #endif
+        // True Live Activity: only when the line changes (this function is
+        // only called with a new index from the tick/seek paths; the manager
+        // dedupes identical states as a second guard).
+        let previous = index.flatMap { $0 > 0 ? lyrics?.lines[$0 - 1].text : nil }
+        let current = index.flatMap { lyrics?.lines[$0].text } ?? lyrics?.lines.first?.text
+        let next = index.flatMap { lyrics?.lines[$0 + 1].text }
+        LyricsLiveActivityManager.shared.lyricDidChange(previous: previous, current: current, next: next)
+    }
+
+    /// Re-publishes the current lyric line to the Live Activity and Now Playing.
+    /// Called by the Settings refresh button and the kumone://lyrics-refresh deep link.
+    func refreshLyricsIsland() {
+        updateLyricsCursor(at: progress)
+        LyricsLiveActivityManager.shared.refreshActivity()
     }
 
     func seek(to seconds: TimeInterval, completion: (@MainActor () -> Void)? = nil) {

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- App Group shared with the app so the extension can read the current
+	     track's cover thumbnail (the compact pill / minimal view). The group
+	     must exist for the App ID in the Apple Developer portal, otherwise
+	     the extension falls back to a music-note icon. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.sb.moe.kumone-ios</string>
+	</array>
+</dict>
+</plist>

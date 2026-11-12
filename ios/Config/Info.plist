@@ -22,7 +22,31 @@
     <key>UIBackgroundModes</key>
     <array>
         <string>audio</string>
+        <string>location</string>
     </array>
+    <!-- Live Activities (lyrics on the Dynamic Island / Lock Screen).
+         Frequent updates only raises the update budget; it does not remove
+         Apple's throttling or the 8-hour lifetime. -->
+    <key>NSSupportsLiveActivities</key>
+    <true/>
+    <key>NSSupportsLiveActivitiesFrequentUpdates</key>
+    <true/>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>sb.moe.kumone-ios.lyrics-refresh</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>kumone</string>
+            </array>
+        </dict>
+    </array>
+    <!-- Only used when the user enables the opt-in "位置保活" switch, and
+         only while the lyrics Live Activity runs. WhenInUse only, coarse
+         accuracy; location values are never read or stored. -->
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>在后台播放歌词灵动岛期间，使用位置保持应用活跃，以便歌词继续更新；仅在你开启「位置保活」且灵动岛运行时才定位，停止播放或关闭灵动岛后即停止。位置数据不会被读取或上传。</string>
     <!-- Expose the app's Documents folder in the Files app (On My iPhone ▸
          Kumone) so a downloaded update IPA is findable and can be imported into
          a signing tool. (#73, #50) -->

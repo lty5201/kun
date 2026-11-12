@@ -399,6 +399,8 @@ final class SettingsManager: ObservableObject {
         static let luoxueScriptPath = "settings.luoxueScriptPath"
         static let autoCheckUpdates = "settings.autoCheckUpdates"
         static let desktopLyrics = "settings.showDesktopLyrics"
+        static let lyricsOnIsland = "settings.lyricsOnIsland"
+        static let lyricsIslandLocationKeepAlive = "settings.lyricsIslandLocationKeepAlive"
         #if os(macOS)
         static let menuBarPlayer = "settings.showMenuBarPlayer"
         static let automix = "settings.automixEnabled"
@@ -647,6 +649,15 @@ final class SettingsManager: ObservableObject {
     @Published var showDesktopLyrics: Bool {
         didSet { UserDefaults.standard.set(showDesktopLyrics, forKey: Keys.desktopLyrics) }
     }
+
+    /// True Live Activity lyrics on the Dynamic Island / Lock Screen. Default off.
+    @Published var lyricsOnIsland: Bool {
+        didSet { UserDefaults.standard.set(lyricsOnIsland, forKey: Keys.lyricsOnIsland) }
+    }
+    /// Opt-in location keep-alive for the lyrics Live Activity. Default off.
+    @Published var lyricsIslandLocationKeepAlive: Bool {
+        didSet { UserDefaults.standard.set(lyricsIslandLocationKeepAlive, forKey: Keys.lyricsIslandLocationKeepAlive) }
+    }
     #if os(macOS)
 
     /// The AutoMix master switch. Off means no per-track analysis at all, and
@@ -834,6 +845,8 @@ final class SettingsManager: ObservableObject {
         enableUnblock = defaults.object(forKey: Keys.unblock) as? Bool ?? true
         autoCheckUpdates = defaults.object(forKey: Keys.autoCheckUpdates) as? Bool ?? true
         showDesktopLyrics = defaults.object(forKey: Keys.desktopLyrics) as? Bool ?? false
+        lyricsOnIsland = defaults.object(forKey: Keys.lyricsOnIsland) as? Bool ?? false
+        lyricsIslandLocationKeepAlive = defaults.object(forKey: Keys.lyricsIslandLocationKeepAlive) as? Bool ?? false
         #if os(macOS)
         automixEnabled = defaults.object(forKey: Keys.automix) as? Bool ?? false
         automixTransitionsEnabled =

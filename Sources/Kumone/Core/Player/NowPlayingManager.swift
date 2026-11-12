@@ -260,6 +260,13 @@ final class NowPlayingManager {
                 let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
                 self.info[MPMediaItemPropertyArtwork] = artwork
                 self.infoCenter.nowPlayingInfo = self.info
+                #if os(iOS)
+                // Feed the Live Activity: album-derived lyric color + cover
+                // thumbnail for the island pill. No-op when 歌词上岛 is off.
+                Task { @MainActor in
+                    LyricsLiveActivityManager.shared.updateArtwork(image)
+                }
+                #endif
             }
             if let image = await ImageCache.shared.image(for: url, onCachedImage: apply) {
                 apply(image)

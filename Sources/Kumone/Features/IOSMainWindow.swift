@@ -56,6 +56,22 @@ public struct IOSMainWindow: View {
             .environment(\.openLogin, { showLogin = true })
             .environment(\.presentSettingsSheet, { showSettings = true })
             .environment(\.openDestination, openDestination)
+            // Live Activity deep links (kumone://lyrics-refresh from the
+            // island / lock screen, kumone://toggle-play and kumone://next-track
+            // from the expanded island controls).
+            .onOpenURL { url in
+                guard url.scheme == "kumone" else { return }
+                switch url.host {
+                case "lyrics-refresh":
+                    PlayerService.shared.refreshLyricsIsland()
+                case "toggle-play":
+                    PlayerService.shared.togglePlayPause()
+                case "next-track":
+                    PlayerService.shared.next()
+                default:
+                    break
+                }
+            }
             // Files app ▸ 长按 .js ▸ 分享 ▸ 零音乐: import the script directly.
             .onOpenURL { url in
                 Task {

@@ -52,6 +52,8 @@ struct SettingsSheet: View {
 struct SettingsView: View {
     @EnvironmentObject private var settings: SettingsManager
     @EnvironmentObject private var account: AccountStore
+    @State private var showLiveActivityAlert = false
+    @State private var liveActivityAlertMessage = ""
     @AppStorage("moumusic.netease.autoSignIn") private var neteaseAutoSignIn = true
     #if os(iOS)
     @ObservedObject private var lxStore = LXSourceStore.shared
@@ -194,12 +196,63 @@ struct SettingsView: View {
                 NavigationLink(value: SettingsPage.lyrics) {
                     Label("歌词设置", systemImage: "text.quote")
                 }
+#if os(iOS)
+                Toggle("歌词上岛", isOn: Binding(
+                    get: { settings.lyricsOnIsland },
+                    set: { newValue in
+                        if newValue {
+                            Task { @MainActor in
+                                switch LyricsLiveActivityManager.shared.authorizationStatus() {
+                                case .granted:
+                                    settings.lyricsOnIsland = true
+                                    PlayerService.shared.refreshLyricsIsland()
+                                case .needsSettings(let reason):
+                                    liveActivityAlertMessage = reason
+                                    showLiveActivityAlert = true
+                                }
+                            }
+                        } else {
+                            settings.lyricsOnIsland = false
+                            LyricsLiveActivityManager.shared.disable()
+                        }
+                    }
+                ))
+                Text("播放时把当前歌词显示在灵动岛与锁屏；关闭后立即从灵动岛与锁屏消失。默认关闭。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if settings.lyricsOnIsland {
+                    Toggle("位置保活（实验性）", isOn: Binding(
+                        get: { settings.lyricsIslandLocationKeepAlive },
+                        set: { newValue in
+                            settings.lyricsIslandLocationKeepAlive = newValue
+                            if newValue {
+                                LyricsLiveActivityManager.shared.requestLocationAuthorizationIfNeeded()
+                            }
+                        }
+                    ))
+                    Text("后台定位保持应用活跃，可能减缓歌词停住，但会耗电，且不能保证苹果不节流更新；App Store 可能以“后台定位仅作保活”为由拒绝。仅在灵动岛运行时定位，停止即停。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("刷新灵动岛歌词") {
+                        PlayerService.shared.refreshLyricsIsland()
+                    }
+                    Text("灵动岛停住时点此重新发布当前歌词行，无需重启播放。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+#endif
                 Toggle("显示歌词翻译", isOn: $settings.showLyricsTranslation)
                 Picker("日文歌词读音", selection: $settings.lyricsAnnotation) {
                     ForEach(LyricsAnnotation.allCases) { annotation in
                         Text(annotation.displayName).tag(annotation)
                     }
                 }
+            }
+            .alert("需要开启实时活动", isPresented: $showLiveActivityAlert) {
+                Button("去设置") { LyricsLiveActivityManager.shared.openSystemSettings() }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text(liveActivityAlertMessage)
             }
 
             Section("外观") {

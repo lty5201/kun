@@ -16,6 +16,18 @@ final class DownloadAppDelegate: NSObject, UIApplicationDelegate {
                      completionHandler: @escaping () -> Void) {
         OfflineDownloadEvents.handleBackgroundSession(identifier: identifier, completion: completionHandler)
     }
+
+    func applicationWillTerminate(_ application: UIApplication) {
+        LyricsLiveActivityManager.shared.endForAppShutdown()
+    }
+
+    func applicationDidEnterBackground(_ application: UIApplication) {
+        // Keep the island while music plays in the background (the Lock
+        // Screen relies on it); only end it when already stopped.
+        if !PlayerService.shared.isPlaying {
+            LyricsLiveActivityManager.shared.endForAppShutdown()
+        }
+    }
 }
 
 // MARK: - CarPlay
