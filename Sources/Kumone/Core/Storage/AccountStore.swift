@@ -73,7 +73,25 @@ final class AccountStore: ObservableObject {
         } catch {
             return
         }
+        if let uid = profile?.userId {
+            await dailySignInIfNeeded(uid: uid)
+        }
+        guard generation == bootstrapGeneration,
+              profile?.userId != nil,
+              profileBinding == MusicClient.shared.authenticationFingerprint else { return }
         await refreshLibrary()
+    }
+
+    /// Auto 签到 once a day per account (设置 → 播放 → 网易云每日自动签到)。
+    /// Key 沿用 Moumusic 的名字，不要改成 kun.*：设置开关与这里必须同名。
+    private func dailySignInIfNeeded(uid: Int) async {
+        guard UserDefaults.standard.object(forKey: "moumusic.netease.autoSignIn") as? Bool ?? true else { return }
+        let day = Calendar.current.startOfDay(for: .now).timeIntervalSince1970
+        let key = "moumusic.netease.signedIn.\(uid)"
+        guard UserDefaults.standard.double(forKey: key) != day else { return }
+        guard let gained = await MusicAPI.dailySignIn() else { return }
+        UserDefaults.standard.set(day, forKey: key)
+        if gained > 0 { ToastCenter.shared.show("网易云每日签到成功，经验 +\(gained)") }
     }
 
     func refreshLibrary() async {

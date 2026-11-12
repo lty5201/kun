@@ -251,6 +251,48 @@ final class MusicClient: @unchecked Sendable {
         return try await perform(request, authentication: authentication)
     }
 
+    /// POST to `https://<web host>/weapi<path>` with weapi encryption.
+    /// The web host comes from ``Upstream`` (like ``api(_:_:)`` and ``eapi(_:_:cookieOverrides:absorbResponseCookies:)``),
+    /// not a hardcoded host. Sent as a browser (``Self/webUserAgent``), with the
+    /// logged-in user's cookies: this is the route the daily sign-in endpoint
+    /// (`/point/dailyTask`) is called through. No account is ever invented here;
+    /// without the user's own login cookies the call fails like any other authed call.
+    func weapi(_ path: String, _ payload: [String: Any] = [:],
+               cookieOverrides: [String: String] = [:]) async throws -> Data {
+        let authentication = authenticationState
+        guard let webHost = Upstream.webHost else {
+            throw MusicAPIError.notConfigured
+        }
+        var body = payload
+        body["csrf_token"] = cookie(named: "__csrf") ?? ""
+        let json = try JSONSerialization.data(withJSONObject: body)
+        let form = RequestCrypto.weapi(payload: json)
+
+        var fullPath = path
+        if let csrf = cookie(named: "__csrf"), !csrf.isEmpty {
+            fullPath += (fullPath.contains("?") ? "&" : "?") + "csrf_token=\(csrf)"
+        }
+        guard let url = URL(string: "https://\(webHost)/weapi\(fullPath)") else {
+            throw MusicAPIError.notConfigured
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(Self.webUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("https://\(webHost)/", forHTTPHeaderField: "Referer")
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue(cookieHeader(extra: Self.weapiBaseCookies, overrides: cookieOverrides),
+                         forHTTPHeaderField: "Cookie")
+        request.httpBody = Self.encodeForm(form)
+        return try await perform(request, authentication: authentication)
+    }
+
+    /// Base cookies the web client sends with weapi calls (Moumusic NeteaseClient.baseCookies, L148-150).
+    /// `cookieHeader(extra:overrides:)` only fills keys not already stored, so a logged-in
+    /// user's real cookies are never overwritten by these defaults.
+    private static var weapiBaseCookies: [String: String] {
+        ["os": "pc", "appver": "3.1.17"]
+    }
+
     /// POST to `https://<interface host>/eapi<path>` with eapi encryption.
     /// The digest is computed over the corresponding `/api<path>` path.
     /// Sent as the desktop client from this install's device, header and

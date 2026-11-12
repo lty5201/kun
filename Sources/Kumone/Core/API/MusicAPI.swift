@@ -82,6 +82,32 @@ enum MusicAPI {
         _ = try? await client.eapi("/login/token/refresh")
     }
 
+    private struct SignInResponse: Decodable {
+        let code: Int
+        let point: Int?
+        let msg: String?
+    }
+
+    /// 每日签到 (`/point/dailyTask`, type 0 = 安卓 3 点经验, 1 = 网页 2 点经验; per NeteaseCloudMusicApi).
+    /// Returns the experience gained, 0 when already signed in today, nil on failure.
+    /// 只用当前登录账号的 cookie；未登录时调用方（AccountStore.bootstrap）根本不会调到这里。
+    static func dailySignIn() async -> Int? {
+        var gained = 0
+        var anyOK = false
+        for type in [0, 1] {
+            // NOTE: intentionally not routed through `decoded`: it throws when
+            // code != 200, which would swallow the documented -2 "already
+            // signed in today" response (Moumusic's -2 branch has the same
+            // problem against its own decoded). Decode the raw payload so -2
+            // is honoured; `decoded` itself is untouched.
+            guard let data = try? await client.weapi("/point/dailyTask", ["type": type]),
+                  let response = try? JSONDecoder().decode(SignInResponse.self, from: data) else { continue }
+            if response.code == 200 { anyOK = true; gained += response.point ?? 0 }
+            if response.code == -2 { anyOK = true }
+        }
+        return anyOK ? gained : nil
+    }
+
     struct AccountResponse: Decodable {
         let code: Int
         let profile: UserProfile?

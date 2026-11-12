@@ -52,6 +52,7 @@ struct SettingsSheet: View {
 struct SettingsView: View {
     @EnvironmentObject private var settings: SettingsManager
     @EnvironmentObject private var account: AccountStore
+    @AppStorage("moumusic.netease.autoSignIn") private var neteaseAutoSignIn = true
     #if os(iOS)
     @ObservedObject private var lxStore = LXSourceStore.shared
     #endif
@@ -153,6 +154,10 @@ struct SettingsView: View {
                 #endif
                 Toggle("灰色歌曲解锁", isOn: $settings.enableUnblock)
                 Text("无版权或下架歌曲将通过落雪自定义源匹配播放")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("网易云每日自动签到", isOn: $neteaseAutoSignIn)
+                Text("每天首次打开 App 时，用当前登录的网易云账号自动签到一次（安卓 + 网页，两次共最多 5 点经验）。关闭后不再自动签到。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
