@@ -54,6 +54,16 @@ public final class LyricsLiveActivityManager: ObservableObject {
     private var currentLyricColorHex: String = LyricsIslandCover.fallbackLyricColorHex
     /// Whether the current track's cover thumbnail is in the shared container.
     private var currentHasCover = false
+    /// Last lyric lines pushed to the island, and when. Updates are throttled:
+    /// the island only needs a push when the line changes (or the track
+    /// changes); pushing on every progress tick (~2x/sec) burns Apple's Live
+    /// Activity update budget, after which the system drops updates and the
+    /// island goes stale (15s) with no lyric — that is why #41/#42 showed no
+    /// lyrics while #40 (60s stale window) survived longer. Progress is still
+    /// refreshed at most every 5s so the expanded progress bar stays roughly
+    /// current.
+    private var lastPublishedLines: (previous: String?, current: String?, next: String?)?
+    private var lastIslandUpdateAt: Date = .distantPast
 
     private init() {
         // Playback stopping anywhere (pause button, queue end, track cleared)
@@ -175,6 +185,18 @@ public final class LyricsLiveActivityManager: ObservableObject {
             endActivity()
             return
         }
+        // Throttle the push: only the line (or track) changing, or a 5s
+        // progress refresh, justifies an Activity update. Pushing on every
+        // progress tick (~2x/sec) exhausts the system's update budget, after
+        // which updates are dropped and the island goes stale with no lyric.
+        let linesChanged = lastPublishedLines?.previous != previous
+            || lastPublishedLines?.current != current
+            || lastPublishedLines?.next != next
+        let isNewTrack = activity?.attributes.trackID != track.id
+        let dueForProgress = Date().timeIntervalSince(lastIslandUpdateAt) >= 5
+        guard linesChanged || isNewTrack || dueForProgress || activity == nil else { return }
+        lastPublishedLines = (previous, current, next)
+        lastIslandUpdateAt = Date()
         if let activity {
             // New song => new activity; same song => update in place.
             if activity.attributes.trackID == track.id {
