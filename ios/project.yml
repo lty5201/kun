@@ -64,6 +64,12 @@ targets:
       base:
         PRODUCT_NAME: LyricsLiveActivity
         CODE_SIGN_ENTITLEMENTS: LyricsLiveActivity/LyricsLiveActivity.entitlements
+        # Must be NO (inline, so it beats XcodeGen's generated YES): with
+        # YES, Xcode generates the Info.plist from build settings and ignores
+        # LyricsLiveActivity/Info.plist, dropping the NSExtension entry the
+        # widget extension needs. With NO, the source plist (which declares
+        # com.apple.widgetkit-extension) is used as-is.
+        GENERATE_INFOPLIST_FILE: NO
   KumoneIOSUITests:
     type: bundle.ui-testing
     platform: iOS
