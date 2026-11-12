@@ -1748,6 +1748,21 @@ final class LXUserAPIService: ObservableObject {
         let returned = (data["type"] as? String)
             ?? (data["quality"] as? String)
             ?? (data["format"] as? String)
+        // A source that explicitly reports it served master is trusted, even
+        // though the bitrate-only path below caps at flac24bit and master is
+        // rarely in `available` (sources seldom declare it and the track
+        // metadata seldom carries a master file size). Without this, master
+        // could never be recognised: wantedRank is 7 but resolvedQuality never
+        // returned a tier with rank >= 7, so every master URL was treated as a
+        // downgrade and the song could only ever play at Hi-Res. A bitrate
+        // below the Hi-Res range contradicts a master claim, so in that case
+        // fall through to the bitrate labelling instead of trusting it.
+        if let returned, normalizedQuality(returned) == "jymaster" {
+            let bitrate = responseBitrate(data)
+            if bitrate == nil || bitrate! >= 900_000 {
+                return "jymaster"
+            }
+        }
         // A few adapters return a quality label from their global capability
         // table while the song response contains the real bitrate. Prefer the
         // track-level bitrate whenever it is available.
