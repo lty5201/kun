@@ -15,6 +15,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # project.yml is the source of truth (XcodeGen); the committed
+      # project.pbxproj may lag behind it, e.g. after adding the
+      # LyricsLiveActivity extension target. Regenerate it so the
+      # archive includes every target in project.yml.
+      - name: Generate Xcode project (XcodeGen)
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
       - name: Archive the iOS app (unsigned)
         run: |
           mkdir -p .build/ios
@@ -34,14 +43,15 @@ jobs:
           mkdir -p Payload dist
           APP_PATH="$(find .build/ios/Kun.xcarchive/Products/Applications -maxdepth 1 -name '*.app' -print -quit)"
           if [ -z "$APP_PATH" ]; then
-            echo "error: no .app found in the archive" >&2
+            echo "::error::No .app found in archive" >&2
             exit 1
           fi
+          APP_NAME="$(basename "$APP_PATH")"
           cp -R "$APP_PATH" Payload/
-          zip -qry dist/Kun-ios.ipa Payload
-          ls -la dist
+          (cd Payload && zip -qr ../dist/Kun-ios.ipa .)
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload the IPA artifact
+        uses: actions/upload-artifact@v4
         with:
           name: Kun-ios-ipa
           path: dist/Kun-ios.ipa
