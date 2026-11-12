@@ -25,9 +25,7 @@ final class DownloadAppDelegate: NSObject, UIApplicationDelegate {
     func applicationDidEnterBackground(_ application: UIApplication) {
         // Keep the island while music plays in the background (the Lock
         // Screen relies on it); only end it when already stopped.
-        if !PlayerService.shared.isPlaying {
-            LyricsLiveActivityManager.shared.endForAppShutdown()
-        }
+        LyricsLiveActivityManager.shared.endForAppShutdownIfNotPlaying()
     }
 }
 

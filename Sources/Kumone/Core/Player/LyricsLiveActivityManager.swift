@@ -220,6 +220,15 @@ public final class LyricsLiveActivityManager: ObservableObject {
         endActivity()
     }
 
+    /// Called from entering background: ends the activity only when nothing
+    /// is playing. The playback check lives here — not in the caller — so
+    /// targets outside KumoneCore never need to touch PlayerService.
+    public func endForAppShutdownIfNotPlaying() {
+        if !PlayerService.shared.isPlaying {
+            endForAppShutdown()
+        }
+    }
+
     private static func staleDate() -> Date {
         // Five minutes: if the app dies without ending the activity, the Lock
         // Screen marks the lyrics stale quickly instead of showing a
